@@ -1,0 +1,217 @@
+---
+title: "Copy Number Pipeline Final Preprocessing"
+author: "Young Kwon"
+date: "September 25, 2016-2019"
+output: html_document
+---
+
+## Segmentation and Copy Number Caller Pipeline for the Low Coverage Devil Project
+
+To normalize the samples  and to decontaminate, we use PCA on the Panel of Normals (PON) using the first 4 components, to create a linear function that can then "predict" what a "host" for each tumor looks like PC space (can be better stated) that we can then subtract away from the tumor. It corrects all the noise that is generated from sequencing errors (affecting both tumor and host), and any host specific CNV/variations. To note, it doesn't sufficiently remove contamination at this step; but we take contamination into account with the caller. 
+
+```{r Step 1: Preprocessing using PCA Functions}
+
+# Internal Function
+log2R_samples<-function(x){
+  b<-log2(x/median(x, na.rm = TRUE))
+  b[which(is.infinite(b))]<-0
+  return(b)
+}
+
+# Note: this is not the GATK version:
+# DataFrames Format: Chrom, Start, End, Sample name 1, Sample name 2, ...)
+
+PCA_normalization<-function(host, tumor){
+  
+  # Step 1: LogR the Raw Read Counts
+  host_log<-apply(host[,4:ncol(host)], 2, log2R_samples)
+  tumor_log<-apply(tumor[,c(4:ncol(tumor))], 2, log2R_samples)
+  
+  
+  # Step 2: Calculate PCA
+  res<-prcomp(t(host_log), center = TRUE, scale = FALSE)
+  
+  # Selected the First 4 PC:
+  test1<-predict(res, newdata=t(tumor_log))[,1:4] %*% t(res$rotation[,1:4])
+  
+  # Created your noise signal for each tumor and centered it on your PON
+  trunc <- scale(test1, center = -1 * res$center, scale=FALSE)
+  
+  # Remove the noise signal from your tumor
+  tumors_pca<-sapply(c(1:ncol(tumor_log)), function(x){
+    df<-tumor_log[,x]-trunc[x,]
+  })
+  colnames(tumors_pca)<-colnames(tumor_log)
+  
+  return(tumors_pca)}
+
+```
+
+
+```{r Step 1: Applying PCA for Normalization}
+
+# Load the readcount data
+load("~/Desktop/Devil/readcounts_final_25_9_19.RData")
+
+
+updated.readcounts<-updated.readcounts[,-which(duplicated(colnames(updated.readcounts)))]
+host<-as.data.frame(updated.readcounts)
+host<-host[,c(1,2,3,grep("H", colnames(host)))]
+
+tumor<-as.data.frame(updated.readcounts)
+tumor<-tumor[,c(1:3, grep("T", colnames(tumor)[6:ncol(tumor)])+5)]
+
+tumors_pca<-PCA_normalization(host, tumor)
+
+``` 
+
+
+NOTE: As further normalization, one can do winsorization across the samples, but I found that with the large sample variability and host contamination accompanied by the large number of samples, winsorizing severely overcorrects some samples, and reduces high CNV states. 
+
+
+We perform Multi-pcf across each of the sample groups for increased specificity in calling group-specific segments. We smooth our segments further using Ansari-Bradly test (this step takes a while, could parallelize in the future with mcapply).
+
+```{r Step 2: Multi-PCF Segmentation}
+library(BioStrings)
+library(plyr)
+library(aCGH)
+
+#-------------------------------------------------------#
+# Skipped Winsorization as PCA works, moving to Segmentation:
+
+# Step 1: Prepare Data Frame for Segmentation
+    tumors.pcf<-cbind(tumor[,1:2], tumors_pca)
+    tumors.pcf[,1]<-gsub("Chr", "", tumors.pcf[,1])
+    colnames(tumors.pcf)<-gsub("X", "", colnames(tumors.pcf))
+    colnames(tumors.pcf)[1:2]<-c("chrom", "pos")
+    chrom.arm<-rep('p', nrow(tumors.pcf))
+
+
+# Step 2: Checking the Appropriate Gamma
+    copynumber::plotGamma(tumors.pcf[,c(1,2,10)], cex = 3)
+
+    
+# Step 3: Split by Group and run Multipcf on each:
+ 
+    haplos <- read.csv("~/phylo_trees/haplos.csv", stringsAsFactors=FALSE) # our haplotype table used for the segmentation is now outdated.
+    haplos$Groups[grep("Unassigned", haplos$Groups)]<-"To be confirmed"
+    unique_haplos<-plyr::count(haplos$Groups[which(haplos$Sample.TCG_ID %in% colnames(tumors.pcf))])
+
+
+ # Run Multiseg based on Haplogroups:
+    mseg_list<-list()
+    mseg_est<-list()
+
+  for(x in which(unique_haplos[,2]>1)){
+        # Run Multipcf on A Haplogroup      
+        mseg<-copynumber::multipcf(tumors.pcf[,c(1,2,which(colnames(tumors.pcf) %in% haplos$Sample.TCG_ID[which(haplos$Groups %in% 
+                                                                                  unique_haplos[x,1])]))], 
+                                        arms=chrom.arm, 
+                                        gamma = 40,
+                                        return.est = TRUE)
+      
+        # Add Data to List
+        mseg_list[[unique_haplos[x,1]]]<-as.data.frame(mseg$segments)
+        mseg_est[[unique_haplos[x,1]]]<-as.data.frame(mseg$estimates)
+  
+  }
+    
+        # Run Multipcf on A Haplogroup      
+        mseg<-copynumber::multipcf(tumors.pcf[,c(1,2,which(colnames(tumors.pcf) %in% haplos$Sample.TCG_ID[which(haplos$Groups %in% 
+                                                                                  unique_haplos[which(unique_haplos[,2]==1),1])]))], 
+                                        arms=chrom.arm, 
+                                        gamma = 40,
+                                        return.est = TRUE)
+      
+        # Add Data to List
+        mseg_list[[unique_haplos[x,1]]]<-as.data.frame(mseg$segments)
+        mseg_est[[unique_haplos[x,1]]]<-as.data.frame(mseg$estimates)
+  
+  
+    
+    
+        mseg_list<-mseg_list[unlist(lapply(mseg_list, length) != 0)]
+        mseg_est<-mseg_est[unlist(lapply(mseg_est, length) != 0)]
+
+
+# Step 4: Compile Multisegmentation across All Haplogroups and Reduce & Sort Matrix
+        mseg_comp<-Reduce(function(x, y) merge(x, y, all = TRUE), 
+                            mseg_est)
+        mseg_comp<-mseg_comp[order(mseg_comp$pos),]
+        mseg_comp<-mseg_comp[order(mseg_comp$chrom),]
+
+        
+        mseg.seg_comp<-Reduce(function(x, y) merge(x, y, all = TRUE), 
+                            mseg_list)
+        mseg.seg_comp<-mseg.seg_comp[order(mseg.seg_comp$start.pos),]
+        mseg.seg_comp<-mseg.seg_comp[order(mseg.seg_comp$chrom),]
+        mseg.seg_comp<-reshape2::melt(mseg.seg_comp, id.vars = colnames(mseg.seg_comp)[1:5])
+        mseg.seg_comp<-mseg.seg_comp[-which(is.na(mseg.seg_comp$value)),]
+        colnames(mseg.seg_comp)[6:7]<-c("sampleID", "mean")
+        mseg.seg_comp<-mseg.seg_comp[-which(mseg.seg_comp$n.probes<5),-c(2,5)]
+        
+        
+
+# Step 5: Perform Ansari/Bradley Tests (pval<.05) for Preliminary Merging for Each Sample
+for(y in unique(colnames(mseg_comp)[3:ncol(mseg_comp)])){
+    
+    message(y)
+    
+        if(!is.na(match(y, colnames(mseg_comp)))){
+            mseg_comp[,y]<-mergeLevels(tumors.pcf[, y], 
+                                               mseg_comp[,y], 
+                                               verbose = FALSE)$vecMerged
+            }
+    }
+
+        
+
+# Step 6: Reformat Data Frames for CN calling assignments
+    mseg_comp$end<-mseg_comp$pos+99999
+    colnames(mseg_comp)[1:2]<-c("seqnames", "start")
+
+    colnames(mseg_comp)<-gsub("X", "", gsub("[.]Devil.1", "", colnames(mseg_comp)))
+    colnames(mseg_comp)<-gsub("X", "", gsub("[.]Devil", "", colnames(mseg_comp)))
+    
+     mseg_comp<-makeGRangesFromDataFrame(mseg_comp, 
+                                        keep.extra.columns = TRUE)
+
+```
+
+
+
+We will perform single pcf segmentation on an individual basis to capture de-novo copy number variants that is only found in a few individuals in the population. To note, because the individual PCF is susceptible to false-positives; or gamma is a lot higher.
+```{r Step 3: Single-PCF Segmentation}
+
+library(BioStrings)
+library(GRanges)
+library(copynumber)
+library(aCGH)
+
+#-------------------------------------------------#
+# Call Single Sample Segmentation across the entire dataset:
+
+
+# Step 1: Run Single-pcf
+          sseg<-copynumber::pcf(tumors.pcf, kmin = 10,
+                              arms=chrom.arm, 
+                              gamma = 50, 
+                              return.est = TRUE)
+
+
+# Step 2: Extract Segments and Estimates from the Single-segmentation 
+          sseg.gr<-as.data.frame(sseg$segments)
+          sseg.gr_cest_reduced<-sseg.gr
+          sseg.gr_est<-as.data.frame(sseg$estimates)
+          
+          
+          
+# Step 3: Cell-line Specific changes:
+          sseg.c<-copynumber::pcf(tumors.pcf[,c(1,2,434)], kmin = 10,
+                              arms=chrom.arm, 
+                              gamma = 40, 
+                              return.est = TRUE)          
+          
+    
+```
+
