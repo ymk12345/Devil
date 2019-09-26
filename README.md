@@ -1,5 +1,8 @@
 # Scripts for the Low coverage DFTD project
 
+
+Preliminary list of codes that need to be placed:
+
 In this repository, you will find the pipeline scripts for the following:
 1) Calling and Filtering Variants in the Mitochondria
 2) Quantification of Mitochondrial Copy Number
