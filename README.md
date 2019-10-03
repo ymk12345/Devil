@@ -14,7 +14,7 @@ In the Mitochondrial Analysis folder
 
 In the Nuclear Genome Analysis folder
 
-5) Calling and filtering of variants from the nuclear genome
+5) Calling and filtering of variants from the nuclear genome--added but will need to join into single variant calling pipeline script
 6) Calling copy numbers on low-coverage samples
 7) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants
 8) QC and filtering the initial 600 probe panel (MIPs)
