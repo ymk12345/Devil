@@ -4,11 +4,14 @@
 Preliminary list of codes that need to be placed:
 
 In this repository, you will find the pipeline scripts for the following:
+
+In the Mitochondrial Analysis folder
 1) Calling and Filtering Variants in the Mitochondria
 2) Quantification of Mitochondrial Copy Number
 3) Phylogeny using Mitochondrial Variants
 4) Plot of Spread of Mitochondrial haplotypes across Tasmania
 
+In the Nuclear Analysis folder
 5) Calling and filtering of variants from the nuclear genome
 6) Calling copy numbers on low-coverage samples 
 7) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants
