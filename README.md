@@ -10,6 +10,7 @@ In the Mitochondrial Analysis folder
 2) Quantification of Mitochondrial Copy Number --added (may need to delete this, since it's not in paper?)
 3) Phylogeny using Mitochondrial Variants --added
 4) Plot of Spread of Mitochondrial haplotypes across Tasmania --combine with the nuclear genome maps.
+5) Should we include the Forestier and West Pencil Pine analysis? If at all, it should be in the supplementary?
 
 In the Nuclear Genome Analysis folder
 
