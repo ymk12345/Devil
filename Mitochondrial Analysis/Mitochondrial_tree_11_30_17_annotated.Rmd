@@ -1,0 +1,236 @@
+---
+title: "Mt_tree"
+author: "Young Kwon"
+date: "September 7, 2017"
+output: html_document
+---
+
+```{r Libraries}
+
+library(xlsx)
+library(stringr)
+
+```
+
+
+
+```{r Import Variants through the Filtered Table}
+inputpath = "/Users/yk1/Documents/Tasmanian_Devil/Meeting/2016_06_01/Part_3_forEPM/21_7_16/Final.Filtered.Table_Somatypus_Matched.csv"
+setwd('/Users/yk1/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/VCF_VAFs_host/')
+
+inputpath<-"/Users/yk1/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Summary/Final.Filtered.Table_Somatypus_10_4_17.csv"
+Filtered.VAF<- read.csv(inputpath)
+
+colnames(Filtered.VAF)<-gsub("X", "", colnames(Filtered.VAF))
+colnames(Filtered.VAF)<-gsub("[.]", "-", colnames(Filtered.VAF))
+Filtered.VAF<-Filtered.VAF[order(as.numeric(gsub("[[:alpha:]].*", "", as.character(Filtered.VAF[,1])))),]
+
+variant.pos<-as.data.frame(str_split_fixed(Filtered.VAF[,1], '[[:alpha:]]', 2)[,1])
+variant.var<-as.data.frame(str_split_fixed(str_split_fixed(Filtered.VAF[,1], '[:digit:]*', 2)[,2], ">", 2))
+variant.metadata<-cbind(variant.pos, variant.var)
+variant.chr<-'MT'
+Filtered.VAF<-Filtered.VAF[,c(1,grep("H", colnames(Filtered.VAF)))]
+
+for (i in 2:ncol(Filtered.VAF)){
+  sample.VAF.filtered<- as.data.frame(cbind('MT', variant.metadata, Filtered.VAF[,i]))
+  sample.VAF.filtered<-sample.VAF.filtered[which(!is.na(sample.VAF.filtered[,5])),]
+  write.table(sample.VAF.filtered[1:4], paste0(colnames(Filtered.VAF)[i], '_filtered_VAF.txt'), sep="\t",quote=F,row.names=F,col.names=F)
+}
+
+
+
+
+```
+
+```{r Import Variants through Haplotype Sample Info}
+
+variants.to.analyze<-read.xlsx2("~/Documents/Tasmanian_Devil/Haplotype_database/2017-11-17-2_v20_Haplotype_Sample_Info_consolidated_EPM.xlsx", sheetIndex = 1)
+
+
+summary<-read.xlsx2("~/Documents/Tasmanian_Devil/Haplotype_database/2017-11-17-2_v20_Haplotype_Sample_Info_consolidated_EPM.xlsx", sheetIndex = 2)
+
+variants.to.analyze<-variants.to.analyze[,c(2,5,6)]
+
+variants.to.analyze<-merge(variants.to.analyze, summary)
+variants.to.analyze$Defining.variants<-paste0(variants.to.analyze$Defining.variants, "; 11788G>A")
+variants.to.analyze$Defining.variants<-gsub("No variants", "",variants.to.analyze$Defining.variants)
+
+setwd("~/Documents/12_1_17_VCF_MT/")
+
+for(x in 1:nrow(variants.to.analyze)){
+  temp<-gsub(" ", "", unique(unlist(str_split(variants.to.analyze$Defining.variants[x], ";"))))
+  temp<-temp[which(temp!="")]
+  
+  temp.data<-data.frame(MT = "MT",
+                       POS = gsub(">", "", gsub("[[:alpha:]]", "", temp)),
+                       REF = gsub("[[:digit:]]", "", str_split_fixed(temp, ">", 2)[,1]),
+                       ALT = gsub("[[:digit:]]", "", str_split_fixed(temp, ">", 2)[,2]))
+  temp.data$POS<-as.numeric(as.character(temp.data$POS))
+  
+  temp.data<-temp.data[order(temp.data$POS),]
+  write.table(temp.data, file = paste0(variants.to.analyze$Sample.TCG_ID[x], ".txt"), quote = F,
+              sep = "\t", row.names = FALSE, col.names = FALSE)
+  
+}
+
+
+
+```
+
+Export VCF Files for RAXML
+
+```{r Export VCF Files}
+
+# Commands on Farm to Use
+
+#yk1@cgpbar:/lustre/scratch112/sanger/casm/dog_n_devil/yk1/LWGS_BAM/MTPhylogeny/Scripts$ bash ./txttovcf.sh ../07_09_17/Host_tree/ ../07_09_17/VCF_VAFs_host/ ../MTReference/Devil_MT_reference.fa ../standard-RAxML-master/usefulScripts/
+
+
+```
+
+Import Output from RAXML
+
+```{r RAXML Analysis}
+setwd("/Users/yk1/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Trees/")
+
+library(ape)
+TREE1<-read.tree("RAxML_bestTree.hosts_8_9_17")
+samp.data<-read.xlsx2("~/Documents/Tasmanian_Devil/sample database/Devil sample database_update_12_5_17 (version 1).xlsx", 1, stringsAsFactors=FALSE)
+inputpath<-"/Users/yk1/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Summary/Final.Filtered.Table_Somatypus_10_4_17.csv"
+Filtered.VAF<- read.csv(inputpath)
+
+colnames(Filtered.VAF)<-gsub("X", "", colnames(Filtered.VAF))
+colnames(Filtered.VAF)<-gsub("[.]", "-", colnames(Filtered.VAF))
+rownames(Filtered.VAF)<-Filtered.VAF[,1]
+Filtered.VAF<-Filtered.VAF[,-1]
+Filtered.VAF<-Filtered.VAF[,grep("H", colnames(Filtered.VAF))]
+Filtered.VAF<-Filtered.VAF[-which(rowSums(is.na(Filtered.VAF))==ncol(Filtered.VAF)),]
+
+TREE1$tip.label<-gsub("_", "", gsub("filtered.VAF", "", gsub("*T.", "", TREE1$tip.label)))
+TREE1$tip.label2<-TREE1$tip.label
+TREE1$tip.label<-gsub("-Devil", "", TREE1$tip.label)
+# Create Loop to color each variant:
+
+
+pdf("test.host.mt.tree_1_without_no_variants.pdf", height = 50, width = 14)
+for(x in 1:nrow(Filtered.VAF)){
+ names.var<-gsub("-Devil", "", colnames(Filtered.VAF)[which(!is.na(Filtered.VAF[x,]))])
+ TREE1$color<-rep("black", length(TREE1$tip.label))
+ TREE1$color[match(names.var, TREE1$tip.label2)]<-"red"
+
+ 
+ plot(TREE1, tip.color=TREE1$color, cex = .3, main = rownames(Filtered.VAF)[x])
+   
+}
+dev.off()
+
+pdf("test.host.mt.unrooted.tree_without_no_variants.pdf", height = 50, width = 50)
+for(x in 1:nrow(Filtered.VAF)){
+ names.var<-gsub("-Devil", "", colnames(Filtered.VAF)[which(!is.na(Filtered.VAF[x,]))])
+ TREE1$color<-rep("black", length(TREE1$tip.label))
+ TREE1$color[match(names.var, TREE1$tip.label2)]<-"red"
+
+ 
+ plot(TREE1, tip.color=TREE1$color, cex = .5, main = rownames(Filtered.VAF)[x], type = "fan")
+   
+}
+dev.off()
+
+
+pdf("test.host.mt.tree_1_without_no_variants.pdf", height = 50, width = 14)
+for(x in 1:nrow(Filtered.VAF)){
+ names.var<-gsub("-Devil", "", colnames(Filtered.VAF)[which(!is.na(Filtered.VAF[x,]))])
+ TREE1$color<-rep("black", length(TREE1$tip.label))
+ TREE1$color[match(names.var, TREE1$tip.label2)]<-"red"
+
+ 
+ plot(TREE1, tip.color=TREE1$color, cex = .3, main = rownames(Filtered.VAF)[x])
+   
+}
+dev.off()
+
+pdf("test.host.mt.unrooted.tree_without_no_variants.pdf", height = 50, width = 50)
+for(x in 1:nrow(Filtered.VAF)){
+  temp.data<-Filtered.VAF[x,-which(is.na(Filtered.VAF[x,]))]
+ names.var<-gsub("-Devil", "", colnames(temp.data))
+ TREE1$color<-rep("black", length(TREE1$tip.label))
+ TREE1$color[match(names.var, TREE1$tip.label2)]<-"red"
+
+ 
+ plot(TREE1, tip.color=TREE1$color, cex = .5, main = rownames(Filtered.VAF)[x], type = "fan")
+   
+}
+dev.off()
+
+
+```
+
+
+
+```{r}
+
+
+VEP_cosmic_genes <- read.csv("~/VEP_cosmic_genes.csv", stringsAsFactors=FALSE)
+VEP_cosmic_genes$CHROM<-VEP_cosmic_genes$X.1.CHROM
+colnames(tumor.variants.dftd1)[1]<-"CHROM"
+VEP_tumors<-merge(VEP_cosmic_genes, tumor.variants.dftd)
+
+library(ape)
+TREE1<-read.tree("~/Documents/Tasmanian_Devil/RAxML_bestTree.Tumors_complete")
+TREE1$tip.label[which(TREE1$tip.label=="199T11")]<-"199T1.1"
+TREE1$tip.label[which(TREE1$tip.label=="993T12")]<-"993T1.2"
+TREE1$tip.label[which(TREE1$tip.label=="995T12")]<-"995T1.2"
+
+
+pdf("test.pdf", height = 50, width = 14)
+for(x in 1:nrow(VEP_tumors)){
+ TREE1$color<-rep("black", length(TREE1$tip.label))
+ TREE1$color[which(TREE1$tip.label %in% colnames(VEP_tumors)[which(VEP_tumors[x,]>=1)])]<-"red"
+
+ 
+ plot(TREE1, tip.color=TREE1$color, cex = .3, main = paste0(VEP_tumors$Gene.Symbol[x], " :",
+                                                            VEP_tumors$CHROM[x], ": ",
+                                                            VEP_tumors$POS[x],
+                                                            VEP_tumors$REF[x], ">",
+                                                            VEP_tumors$ALT[x]))
+   
+}
+dev.off()
+
+```
+
+
+
+
+```{r}
+
+
+#Pseudo Chromosome for Raxml:
+char.chrom<-paste(tumors$REF, collapse="")
+char.chrom.DNA<-DNAString(char.chrom)
+
+set = DNAStringSet(char.chrom.DNA)
+
+for(x in 8:ncol(tumors)){
+  temp<-tumors[,x]
+  temp.alt<-tumors[which(temp>0), c(3)]
+  
+  set = c(set, 
+          DNAStringSet(replaceLetterAt(DNAString(char.chrom.DNA), 
+                                       which(temp>0), temp.alt)))
+}
+
+
+names(set)<-colnames(tumors)[8:ncol(tumors)]
+writeXStringSet(set, "raxml_no_host_alltumor_reads_nohost.fa", append=FALSE,
+                compress=FALSE, compression_level=NA, format="fasta")
+
+
+
+```
+
+
+
+
+
+
