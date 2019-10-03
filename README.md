@@ -14,12 +14,13 @@ In the Mitochondrial Analysis folder
 
 In the Nuclear Genome Analysis folder
 
-5) Calling and filtering of variants from the nuclear genome--added but will need to join into single variant calling pipeline script
-6) Calling copy numbers on low-coverage samples
-7) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants
-8) QC and filtering the initial 600 probe panel (MIPs)
-9) Filtering of MIPs (post-QC) and overlapping with copy number states
-10) Generating Phylogeny using MIPs
-11) Telomere analysis
+6) Calling and filtering of variants from the nuclear genome--added but will need to join into single variant calling pipeline script
+7) Calling copy numbers on low-coverage samples
+8) MIPs: calling; 1st QC.
+9) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants 
+10) QC and filtering the initial 600 probe panel (MIPs)
+11) Filtering of MIPs (post-QC) and overlapping with copy number states
+12) Generating Phylogeny using MIPs
+13) Telomere analysis
 
-12) Plotting spread of different groups across Tasmania
+14) Plotting spread of different groups across Tasmania
