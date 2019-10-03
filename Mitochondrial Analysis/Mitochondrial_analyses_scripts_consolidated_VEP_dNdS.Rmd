@@ -1,0 +1,837 @@
+---
+title: "Mitochondrial_Analyses: VEP, dN/dS"
+author: "Young Kwon"
+date: "September 5, 2017"
+output: html_document
+---
+
+
+```{r Libraries}
+library(xlsx)
+library(ggplot2)
+library(stringr)
+```
+
+
+
+
+```{r Merge with Sample Database}
+
+haplo.samp<-read.xlsx2("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Summary/2017-4-09_v12_Haplotype_Sample_Info.xlsx", 1, stringsAsFactors=FALSE)
+
+samp.data<-read.xlsx2("~/Documents/Tasmanian_Devil/sample database/Devil sample database_update_12_5_17 (version 1).xlsx", 1, stringsAsFactors=FALSE)
+
+haplo.samp$TCG_ID<-gsub("[[:alpha:]].*", "", haplo.samp$Sample.TCG_ID)
+
+haplo.idx<-which(haplo.samp$Location=="")
+haplo.new.info.idx<-match(haplo.samp$TCG_ID[which(haplo.samp$Location=="")], 
+                    samp.data$TCG_ID)
+
+haplo.samp$Location[haplo.idx]<-samp.data$Location[haplo.new.info.idx]
+haplo.samp$Year[haplo.idx]<-samp.data$Year.samples.collected..yyyy.[haplo.new.info.idx]
+
+#write.xlsx2(haplo.samp, file = paste0(Sys.Date(), "temp.haplo.samp.xlsx"), row.names = FALSE)
+
+# Add Locations
+Location_Coordinates <- read.csv("~/Documents/Tasmanian_Devil/Low Coverage_WGS/Data Analyses/Copy Number/CN/Location_Coordinates.csv", stringsAsFactors=FALSE)
+
+```
+
+
+```{r Mutational Spectra}
+
+# libraries
+require(xlsx)
+require(stringr)
+library(dplyr)
+
+# Load Haplotype Summary
+
+haplo.summary<-read.xlsx2("~/Documents/Tasmanian_Devil/Low Coverage_WGS/Data Analyses/Mitochondrial/2017-04-09_Haplotype_Summary_Overview.xlsx", 1)
+
+haplo.summary1<-read.xlsx2("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Summary/2017-05-09_Haplotype_Summary_Overview.xlsx", 3, stringsAsFactors=FALSE)
+
+
+
+
+
+# Mutational Spectra
+somatic.variant<-unique(unlist(str_split(gsub(" ", "", unlist(
+                      str_split(haplo.summary$Defining.Variant.s., ";"))), ",")))
+
+somatic.variant<-unique(unlist(str_split(gsub(" ", "", unlist(
+                      str_split(haplo.summary$Defining.variant.s., ";"))), ",")))
+
+somatic.variant<-somatic.variant[-1]
+somatic.variant<-somatic.variant[-which(somatic.variant =="")]
+som.var<-gsub(".*[[:digit:]]","",somatic.variant)
+count.som.var<-as.data.frame(table(som.var))
+count.som.var$som.var<-as.character(count.som.var$som.var)
+#count.som.var<-rbind(count.som.var, c("C>G", 0), c("G>T", 0), c("T>G", 0))
+
+
+ref.alt<-matrix(c("A>C", "T>G",
+                  "A>G", "T>C",
+                  "A>T", "T>A",
+                  "C>A", "C>A",
+                  "C>T", "C>T",
+                  "C>G", "C>G",
+                  "G>A", "C>T",
+                  "G>C", "C>G",
+                  "G>T", "C>A",
+                  "T>A", "T>A",
+                  "T>C", "T>C",
+                  "T>G", "T>G"), 
+                ncol = 2, byrow=TRUE)
+colnames(ref.alt)<-c("som.var", "alt")
+
+som.var.figure<-merge(ref.alt, count.som.var, by = "som.var", all.x = TRUE)
+som.var.figure$group<-ifelse(grepl("A>|G>", som.var.figure$som.var), 
+                            "Purine", "Pyrimidine")
+som.var.figure$Freq[which(is.na(som.var.figure$Freq))]<-0
+som.var.figure$Freq[which(som.var.figure$group=="Purine")]<- (-1)*som.var.figure$Freq[which(som.var.figure$group=="Purine")]
+som.var.figure$factor<-as.factor(som.var.figure$alt)
+
+
+
+ggplot(som.var.figure, aes(x= alt, y=Freq, fill=group)) + 
+  geom_bar(stat="identity", position="identity")+
+  xlab("")+
+  ylab("Frequency")+
+  labs(fill = "")+
+  scale_fill_hc()+
+  ggtitle("MT Germline Mutational Spectra: Pyrmidine Context Based")+
+  theme_bw()+
+    theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+```
+
+
+```{r VEP Output}
+
+VEP.input<-data.frame(CHR = 'MT',
+           START = sub("[[:alpha:]].*","",somatic.variant),
+           END = sub("[[:alpha:]].*","",somatic.variant),
+           MUT=gsub(">", "/",gsub(".*[[:digit:]]","",somatic.variant)),
+           STR = '+')
+
+write.table(VEP.input, file = paste0(Sys.Date(), "_VEP_input.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+
+```{r VEP Analyses GENE Comparison}
+
+### VEP Somatic Output ###
+VEP.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP//VEP_output_4_9_17.Consequence_ne_-_and_Consequence_ne_synonymous_variant.txt")
+
+VEP.somatic$POS<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[2])
+VEP.somatic$Chrom<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[1])
+VEP.somatic$Mut<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.somatic$Mut<-gsub("/", ">", VEP.somatic$Mut)
+
+## Extract the Impacts: Low-High
+VEP.somatic.impact<-VEP.somatic[which(VEP.somatic$IMPACT == "LOW"|VEP.somatic$IMPACT == "MODERATE"|VEP.somatic$IMPACT == "HIGH"),]
+VEP.somatic.impact$type<-"Germline"
+
+
+
+### VEP Germline Output ####
+VEP.germline<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/germline/2017_09_08_VEP_output_all.txt")
+
+VEP.germline<-VEP.all[which(VEP.germline$DISTANCE=="-"),]
+VEP.germline<-VEP.germline[-grep("non_coding", VEP.germline$Consequence),]
+VEP.germline$DN.DS<-ifelse(grepl("start|stop|missense", VEP.germline$Consequence), "non-synonymous", "synonymous")
+VEP.germline$Consequence<-gsub(",", " \n ", VEP.germline$Consequence)
+VEP.germline$type<-"Germline"
+
+VEP.total.genes<-rbind(VEP.somatic.impact[, c("SYMBOL", "type", "Consequence")], VEP.somatic.impact.som[,c("SYMBOL", "type", "Consequence")])
+
+
+# Graph of the genes and the impact factors: stacked barplot
+ggplot(VEP.total.genes, aes(SYMBOL, fill = Consequence))+geom_bar(color = "black")+
+  ylim(c(0,15))+facet_grid(type~.)+
+  labs(x = "",
+       y = "Count",
+       title = "Count of Variants Across Mt Genes", fill = "Mutation type")+
+  scale_fill_calc() + 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 15),
+    axis.text.y = element_text(size = 15),
+    strip.text = element_text(face = "bold", size = 16),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    #panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+# Graph of the genes and the impact factors: stacked barplot
+ggplot(VEP.somatic.impact, aes(SYMBOL, fill = Consequence))+geom_bar()+
+  ylim(c(0,15))+
+  labs(x = "MT Genes",
+       y = "Count",
+       title = "Germline MT Variants", fill = "Mutation type")+
+  scale_fill_manual(values = c("#83CAFF", "#004586",  "#579D1C")) + 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+```
+
+
+```{r VEP Analysis Mutational Spectra}
+## 
+VEP.all<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/germline/2017_09_08_VEP_output_all.txt")
+
+VEP.all<-VEP.all[which(VEP.all$DISTANCE=="-"),]
+VEP.all$Mut<-rapply(str_split(VEP.all$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.all$Mut<-gsub("/", ">", VEP.all$Mut)
+count.VEP.all<-as.data.frame(table(VEP.all[, c("Mut", "STRAND")]))
+colnames(count.VEP.all)<-c("som.var", "Strand", "Freq")
+
+count.VEP.all<-merge(ref.alt, count.VEP.all, by = "som.var", all.x=TRUE)
+temp<-count.VEP.all[which(is.na(count.VEP.all$Freq)),]
+count.VEP.all$Strand[which(is.na(count.VEP.all$Freq))]<-1
+count.VEP.all$Freq[which(is.na(count.VEP.all$Freq))]<-0
+temp$Strand<- -1
+temp$Freq<- 0
+count.VEP.all<-rbind(count.VEP.all, temp)
+count.VEP.all$Freq[which(count.VEP.all$Strand=="-1")]<- (-1)*count.VEP.all$Freq[which(count.VEP.all$Strand=="-1")]
+
+
+count.VEP.all$group<-ifelse(grepl("A>|G>", count.VEP.all$som.var), 
+                            "Purine", "Pyrimidine")
+
+ggplot(count.VEP.all, aes(x= som.var, y=Freq, fill=Strand)) + 
+  geom_bar(stat="identity", position="identity", width=.95)+
+  xlab("")+
+  ylab("Frequency")+
+  labs(fill = "Strand")+
+  scale_fill_wsj(labels = c("Light", "Heavy"))+
+  facet_grid(.~alt, scales = "free_x")+
+  ggtitle("MT Germline Mutational Spectra: Pyrmidine Context Based and Strand")+
+  theme_bw()+
+    theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing.x = unit(.2, "lines"),
+    panel.background = element_blank(),
+    #strip.background = element_blank(),
+    #strip.text = element_blank(),
+    panel.spacing = unit(0, "lines")) 
+
+
+
+
+### VEP ALL Somatic Output ###
+VEP.all.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/somatic/VEP_output_4_9_17.txt")
+
+VEP.all.somatic<-VEP.all.somatic[-which(VEP.all.somatic$Consequence=="-"),]
+VEP.all.somatic<-VEP.all.somatic[-grep("non_coding", VEP.all.somatic$Consequence),]
+VEP.all.somatic$DN.DS<-ifelse(grepl("start|stop|missense", VEP.all.somatic$Consequence), "non-synonymous", "synonymous")
+VEP.all.somatic$Consequence<-gsub(",", " \n ", VEP.all.somatic$Consequence)
+
+ggplot(VEP.all.somatic, aes(Consequence, fill = Consequence))+geom_bar()+
+  labs(x = "Mutation type",
+       y = "Count",
+       title = "Somatic MT Variants: Mutation Type", fill = "")+
+  scale_fill_manual(values =c("#B35044", "#EE9489", "#F3B8B0", "#79ADD4"))+ 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+ggplot(VEP.all.somatic, aes(Consequence, fill = Consequence))+geom_bar()+
+  labs(x = "Mutation type",
+       y = "Count",
+       title = "Germline MT Variants: Mutation Type", fill = "")+
+  scale_fill_manual(values =c("#EE9489", "#F3B8B0", "#79ADD4"))+ 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+write.table(VEP.somatic.impact, file = "../VEP_4_9_17/VEP.somatic.impact.txt", row.names = FALSE, sep = "\t")
+```
+
+
+```{r dN/dS (Context-based)}
+
+# Load Sequence Files of Protein-coding Genes and consolidate to one large fasta file:
+
+### VEP ALL Somatic Output ###
+VEP.all.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/germline/2017_09_08_VEP_output_all.txt", stringsAsFactors = FALSE)
+
+VEP.all.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/somatic/VEP_output_4_9_17.txt", stringsAsFactors = FALSE)
+
+VEP.all.somatic<-VEP.all.somatic[which(VEP.all.somatic$DISTANCE=="-"),]
+VEP.all.somatic<-VEP.all.somatic[-which(VEP.all.somatic$Consequence=="-"),]
+VEP.all.somatic$DN.DS<-ifelse(grepl("start|stop|missense", VEP.all.somatic$Consequence), "non-synonymous", "synonymous")
+VEP.all.somatic$Ref<-rapply(str_split(VEP.all.somatic$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.all.somatic$Ref<-str_split_fixed(VEP.all.somatic$Ref, "/", 2)[,1]
+VEP.all.somatic$Pos<-rapply(str_split(VEP.all.somatic$X.Uploaded_variation, "_"), function(x) x[2])
+VEP.all.somatic<-VEP.all.somatic[which(VEP.all.somatic$IMPACT!="MODIFIER"),]
+
+
+
+# Import From Sequence File (Concatenate Together)
+seq.list<-list.files("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/dN:dS/Sequence files/", pattern = ".fa")
+#seq.list<-seq.list[-length(seq.list)]
+seq.list.names<-rapply(str_split(seq.list, "_"), function(x) x[3])
+
+
+seq<-matrix(ncol = 3, nrow = length(seq.list))
+seq[,1]<-seq.list.names
+setwd("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/dN:dS/Sequence files/")
+for(i in 1:length(seq.list)){
+  data<-as.data.frame(Biostrings::readDNAStringSet(seq.list[i]))
+  data<-data[which(data[,1]==1),3]
+  seq[i,2]<-paste(as.character(data), collapse ="")
+  seq[i,3]<-nchar(seq[i,2])
+}
+seq<-as.data.frame(seq)
+colnames(seq)<-c("SYMBOL", "Seq", "Width")
+seq$triplet<-as.numeric(as.character(seq$Width))/3
+seq$triplet<-floor(seq$triplet)
+
+seq$newseq<-"NA"
+seq$Width<-as.numeric(seq$Width)
+for(i in 1:length(seq.list)){
+seq$newseq[i]<-substr(seq$Seq[i], 1, seq$triplet[i]*3)
+seq$Width[i]<-nchar(as.character(seq$newseq[i]))
+}
+seq$newpos<-0
+seq$cat.seq<-as.character(seq$newseq)
+
+for(i in 2:length(seq.list)){
+  seq$newpos[i]<-as.numeric(as.character(seq$newpos[i-1]))+as.numeric(as.character(seq$Width[i-1]))
+  seq$cat.seq[i]<-paste0(as.character(seq$cat.seq[i-1]), as.character(seq$newseq[i]))
+}
+
+
+
+# Assign Ensembl and coordinates:
+seq<-merge(seq, VEP.all.somatic[,c(3,6,7,9,16:18, 34)])
+
+
+
+#Germline
+seq<-merge(seq, VEP.all.somatic[,c(3,6,7,9,16:18,32)])
+
+
+ seq$Ref[which(seq$SYMBOL=="ND6")]<-ifelse( seq$Ref[which(seq$SYMBOL=="ND6")]=="A", "T",
+                                            ifelse( seq$Ref[which(seq$SYMBOL=="ND6")]=="C", "G",
+                                                    ifelse( seq$Ref[which(seq$SYMBOL=="ND6")]=="G", "C",
+                                                            ifelse( seq$Ref[which(seq$SYMBOL=="ND6")]=="T", "A", ""))))
+ 
+ seq$Allele[which(seq$SYMBOL=="ND6")]<-ifelse( seq$Allele[which(seq$SYMBOL=="ND6")]=="A", "T",
+                                            ifelse( seq$Allele[which(seq$SYMBOL=="ND6")]=="C", "G",
+                                                    ifelse( seq$Allele[which(seq$SYMBOL=="ND6")]=="G", "C",
+                                                            ifelse( seq$Allele[which(seq$SYMBOL=="ND6")]=="T", "A", ""))))
+
+# Assign position for the mutation, add the mutation
+seq$mutpos<-seq$newpos+as.numeric(as.character(seq$CDS_position))
+
+# Create Character Vector of the Reference Sequence:
+ref_seq_mitochondrial<-as.vector(unlist(str_split(as.character(seq$cat.seq[nrow(seq)]), "")))
+ref_seq<-ref_seq_mitochondrial
+
+# Function to translate:
+create.Lmatrix.CanFam3 = function(ref_seq) {
+    
+    library(seqinr)
+    genetic_code = 2    # For seqinr "translate" function: Std. genetic code (use 2 for mitochondrial)
+    
+    L = length(ref_seq)
+    nt = c("A","C","G","T")
+    trinuc_list = paste(rep(nt,each=16,times=1), rep(nt,each=4,times=4), rep(nt,each=1,times=16), sep="")
+    L_matrix_full = array(0,dim=c(64,4,3))
+    rownames(L_matrix_full) = trinuc_list
+    colnames(L_matrix_full) = nt
+    
+    for (j in 2:(L-1)) { ### WARNING: First and last bases are not considered since we do not have their full context
+        pos = j
+        old_trinuc = ref_seq[(pos-1):(pos+1)]
+        old_base = old_trinuc[2]
+        other_bases = nt[old_base!=nt]
+        
+        for (h in 1:3) {
+            new_base = other_bases[h]
+            
+            # Trinucleotide
+            new_trinuc = c(old_trinuc[1],new_base,old_trinuc[3])
+            old_trinuc_num = which(paste(old_trinuc,collapse="") == trinuc_list)
+            new_trinuc_num = which(paste(new_trinuc,collapse="") == trinuc_list)
+            
+            # Codon
+            codon_pos = c(ceiling(pos/3)*3-2, ceiling(pos/3)*3-1, ceiling(pos/3)*3)
+            old_codon = ref_seq[codon_pos]
+            pos_in_codon = pos-(ceiling(pos/3)-1)*3
+            new_codon = old_codon; new_codon[pos_in_codon] = new_base
+            old_aa = translate(old_codon,numcode=genetic_code)
+            new_aa = translate(new_codon,numcode=genetic_code)
+            
+            # Annotate the mutation
+            # (Only if there is no 'N' base in the codons)
+            if (new_aa != "X" & old_aa != "X") {
+                # Synonymous
+                if (new_aa == old_aa){
+                    L_matrix_full[old_trinuc_num,new_base,1] = L_matrix_full[old_trinuc_num,new_base,1]+1
+                # Nonsense or Sense-gain
+                } else if (new_aa == "*" | old_aa == "*") { 
+                    L_matrix_full[old_trinuc_num,new_base,3] = L_matrix_full[old_trinuc_num,new_base,3]+1
+                # Missense
+                } else {
+                    L_matrix_full[old_trinuc_num,new_base,2] = L_matrix_full[old_trinuc_num,new_base,2]+1
+                }
+            }
+        }
+        if (j %% 10000 == 0) { print(j/L) }
+    }
+    L_matrix_full
+}
+
+data<-create.Lmatrix.CanFam3(ref_seq_mitochondrial)
+ L_matrix_full<-data
+ 
+# Mutation for Somatic 
+mut.seqs<-seq[,c(15, 14, 8)]
+
+mutations<-mut.seqs
+trinuc_subst_matrix<- read.csv("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/dN:dS/F_matrix_FULLctx.txt", header=FALSE, stringsAsFactors=FALSE)
+
+output<-"~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/dN:dS/"
+poissdNdS.CanFam3 = function(mutations, ref_seq, suffix, out.dir) {
+    
+    library(seqinr)
+    genetic_code = 2        # For seqinr "translate" function: Std. genetic code (use 2 for mitochondrial)
+    plot_spectrum = FALSE   # Plot heatmap mutational spectrum?
+    remove_duplicate_mutations = FALSE  # Collapse identical mutations as a single entry?
+    
+    
+    
+    
+    ### 1. Initialisation
+    
+    # RData file with the necessary data for CanFam3.1:
+    #   ref_seq: full, single reference nucleotide sequence, as a character vector
+    #   trinuc_subst_matrix: full context-dependency model (192 rate parameters)
+    #   L_matrix_full: made using "create.Lmatrix.CanFam3"
+    #data_file = "~/Desktop/R/_AnalysisPipeline/Functions/FUN_poissdNdS.CanFam3_DATA.RData"
+    
+    # Load RData file
+    #load(data_file)
+    
+    if (is.character(mutations[1,1]) | !(mutations[1,2] %in% c("A","C","G","T")) | !(mutations[1,3] %in% c("A","C","G","T"))) {
+        mutations = mutations[-1,]
+        mutations[,1] = as.numeric(mutations[,1])
+    }
+    colnames(mutations) = c("pos","ref","mut")
+    if (remove_duplicate_mutations) {
+        mutations = unique(mutations)
+    }
+    
+    L = length(ref_seq)
+    nt = c("A","C","G","T")
+    trinuc_list = paste(rep(nt,each=16,times=1), rep(nt,each=4,times=4), rep(nt,each=1,times=16), sep="")
+    
+    
+    
+    
+    ### 2. Create the n_matrix_full
+    mutations = mutations[!(mutations$pos==1 | mutations$pos==L),] ### WARNING: First and last bases are not considered since we do not have their full context
+    n_matrix_full = array(0,dim=c(64,4,3)); rownames(n_matrix_full) = trinuc_list; colnames(n_matrix_full) = nt
+    
+    for (j in 1:nrow(mutations)) {
+        
+        pos = mutations$pos[j]
+        old_trinuc = ref_seq[(pos-1):(pos+1)]
+        old_base = as.character(mutations$ref[j])
+        new_base = as.character(mutations$mut[j])
+        
+        # Trinucleotide
+        new_trinuc = c(old_trinuc[1],new_base,old_trinuc[3])
+        old_trinuc_num = which(paste(old_trinuc,collapse="") == trinuc_list)
+        new_trinuc_num = which(paste(new_trinuc,collapse="") == trinuc_list)
+        
+        # Codon
+        codon_pos = c(ceiling(pos/3)*3-2, ceiling(pos/3)*3-1, ceiling(pos/3)*3)
+        old_codon = ref_seq[codon_pos]
+        pos_in_codon = pos-(ceiling(pos/3)-1)*3
+        new_codon = old_codon; new_codon[pos_in_codon] = new_base
+        old_aa = translate(old_codon,numcode=genetic_code)
+        new_aa = translate(new_codon,numcode=genetic_code)
+        
+        # Annotate the mutation
+        # (Only if there is no 'N' base in the codons)
+        if (new_aa != "X" & old_aa != "X") {
+            # Synonymous
+            if (new_aa == old_aa) {
+                n_matrix_full[old_trinuc_num,new_base,1] = n_matrix_full[old_trinuc_num,new_base,1]+1
+            # Nonsense or Sense-gain
+            } else if (new_aa == "*" | old_aa == "*") {
+                n_matrix_full[old_trinuc_num,new_base,3] = n_matrix_full[old_trinuc_num,new_base,3]+1
+            # Missense
+            } else {
+                n_matrix_full[old_trinuc_num,new_base,2] = n_matrix_full[old_trinuc_num,new_base,2]+1
+            }
+        }
+        
+        if (j %% 10000 == 0) { print(j / nrow(mutations)) }
+    }
+    
+    
+    
+    
+    ### 3. Create F_matrix
+    mutation_types = unique(as.vector(trinuc_subst_matrix))
+    mutation_types = sort(mutation_types[mutation_types!=""])
+    F_matrix = array("",dim=c(length(mutation_types),3))
+    
+    for (j in 1:64){
+        for (h in 1:4){
+            
+            ind = which(trinuc_subst_matrix[j,h] == mutation_types)
+            if (length(ind)==1){
+                
+                # Generate F_matrix
+                F_matrix[ind,1] = mutation_types[ind]
+                F_matrix[ind,2] = paste(mutation_types[ind],"*wMIS",sep="")
+                F_matrix[ind,3] = paste(mutation_types[ind],"*wNON",sep="")
+            }
+        }
+    }
+    
+    ind_matrix = array(NA,dim=c(64,4))
+    for (j in 1:64){
+        for (h in 1:4){
+            ind = which(trinuc_subst_matrix[j,h] == mutation_types)
+            if (length(ind)==1) { ind_matrix[j,h] = ind }
+        }
+    }
+    
+    # Collapse the n_matrix and L_matrix using the ind_matrix
+    n_matrix = array(0,dim=c(length(mutation_types),3))
+    L_matrix = array(0,dim=c(length(mutation_types),3))
+    
+    for (j in 1:64){
+        for (h in 1:4){
+            
+            ind = ind_matrix[j,h]
+            if (!is.na(ind)==1){
+                
+                # Aggregate n_matrix_full
+                n_matrix[ind,1] = n_matrix[ind,1] + n_matrix_full[j,h,1]
+                n_matrix[ind,2] = n_matrix[ind,2] + n_matrix_full[j,h,2]
+                n_matrix[ind,3] = n_matrix[ind,3] + n_matrix_full[j,h,3]
+                
+                # Aggregate L_matrix_full
+                L_matrix[ind,1] = L_matrix[ind,1] + L_matrix_full[j,h,1]
+                L_matrix[ind,2] = L_matrix[ind,2] + L_matrix_full[j,h,2]
+                L_matrix[ind,3] = L_matrix[ind,3] + L_matrix_full[j,h,3]
+            }
+        }
+    }
+    
+    
+    
+    
+    ### 4. Subfunction: calculate the logLik of a model
+    # Sub-subfunction "log_poisspdf"
+    log_poisspdf = function(k,lambda) {
+        if (k==0 & lambda==0) {
+            logp = 0 # P=1
+        } else if (k==0) {
+            logp = -lambda # If k=0, the equation simplifies
+        } else {
+            logp = k*log(lambda)-lambda-sum(log(1:k)) # P<1
+        }
+        logp
+    }
+    
+    # Subfunction "logLik_selection"
+    logLik_selection = function(n_matrix,L_matrix,F_matrix,paramEsts) {
+        
+        # log-likelihood as the product of Poisson process (given by the rates in F_matrix)
+        logL_vec = array(NA, length(F_matrix))
+        for (j2 in 1:length(F_matrix)) {
+            rate_eq = strsplit(F_matrix[j2],split="\\*")[[1]]
+            rate = L_matrix[j2]*prod(paramEsts[rate_eq])
+            logL_vec[j2] = log_poisspdf(n_matrix[j2],rate)
+        }
+        logL = sum(logL_vec)
+        logL
+    }
+    
+    
+    
+    
+    ### 5. Poisson regression
+    x = c(n_matrix)
+    L = c(L_matrix)
+    F = c(F_matrix)
+    rmpos = (L==0) # Removing impossible combinations (zero exposure)
+    x = x[!rmpos]; L = L[!rmpos]; F = F[!rmpos]
+    predictors = unique(strsplit(x=paste(F,collapse="*"), split="\\*")[[1]])
+    indicator_matrix = as.data.frame(array(0,dim=c(length(F),length(predictors))))
+    colnames(indicator_matrix) = predictors
+    for (j in 1:length(F)) {
+        rate_eq = strsplit(F[j],split="\\*")[[1]]
+        indicator_matrix[j,rate_eq] = 1
+    }
+    
+    model = glm(formula = x ~ offset(log(L)) + . -1, data=indicator_matrix, family=poisson(link=log))
+    ci = exp(confint.default(model))
+    CItable = data.frame(omega=c("wMIS","wNON"), MLEs=exp(coefficients(model))[c("wMIS","wNON")], lowbd=ci[c("wMIS","wNON"),1], highbd=ci[c("wMIS","wNON"),2])
+    rates_MLE = exp(coefficients(model))
+    logL = logLik_selection(x,L,F,rates_MLE)
+    rm(F)
+    rates_and_CI = data.frame(rates=rates_MLE[rownames(ci)], CI2.5=ci[,1], CI97.5=ci[,2])
+    write.table(rates_and_CI, file=paste0(out.dir, "/PoissonMLErates_", suffix, ".txt"), sep="\t", row.names=TRUE, col.names=TRUE, append=FALSE, quote=FALSE)
+    
+    
+    
+    
+    ### 6. P-value against neutrality
+    ## wMIS=1
+    ## (MIS/SYN ratio = 1; testing significance of obtained wMIS)
+    x = c(n_matrix)
+    L = c(L_matrix)
+    F = c(cbind(F_matrix[,1],F_matrix[,1],F_matrix[,3]))  # wMIS=1 => F_matrix[,2] = F_matrix[,1]
+    rmpos = (L==0) # Removing impossible combinations (zero exposure)
+    x = x[!rmpos]; L = L[!rmpos]; F = F[!rmpos]
+    predictors = unique(strsplit(x=paste(F,collapse="*"), split="\\*")[[1]])
+    indicator_matrix = as.data.frame(array(0,dim=c(length(F),length(predictors))))
+    colnames(indicator_matrix) = predictors
+    for (j in 1:length(F)) {
+        rate_eq = strsplit(F[j],split="\\*")[[1]]
+        indicator_matrix[j,rate_eq] = 1
+    }
+    model = glm(formula = x ~ offset(log(L)) + . -1, data=indicator_matrix, family=poisson(link=log))
+    rates = exp(coefficients(model))
+    logL_wMIS1 = logLik_selection(x,L,F,rates)
+    rm(F)
+    
+    ## wNON=1
+    ## (NON/SYN ratio = 1; testing significance of obtained wNON)
+    x = c(n_matrix)
+    L = c(L_matrix)
+    F = c(cbind(F_matrix[,1],F_matrix[,2],F_matrix[,1]))  # wNON=1 => F_matrix[,3] = F_matrix[,1]
+    rmpos = (L==0) # Removing impossible combinations (zero exposure)
+    x = x[!rmpos]; L = L[!rmpos]; F = F[!rmpos]
+    predictors = unique(strsplit(x=paste(F,collapse="*"), split="\\*")[[1]])
+    indicator_matrix = as.data.frame(array(0,dim=c(length(F),length(predictors))))
+    colnames(indicator_matrix) = predictors
+    for (j in 1:length(F)) {
+        rate_eq = strsplit(F[j],split="\\*")[[1]]
+        indicator_matrix[j,rate_eq] = 1
+    }
+    model = glm(formula = x ~ offset(log(L)) + . -1, data=indicator_matrix, family=poisson(link=log))
+    rates = exp(coefficients(model))
+    logL_wNON1 = logLik_selection(x,L,F,rates)
+    rm(F)
+    
+    CItable$logL0 = logL
+    CItable$logL1 = c(logL_wMIS1,logL_wNON1)
+    CItable$pval = c(1-pchisq(2*(logL-logL_wMIS1),1), 1-pchisq(2*(logL-logL_wNON1),1))
+    write.table(CItable, file=paste0(out.dir, "/SelectionParameters_", suffix, ".txt"), sep="\t", row.names=FALSE, col.names=TRUE, append=FALSE, quote=FALSE)
+    write.table(rbind(c("\nwMIS_MLEs", "wMIS_pval", "wNON_MLEs", "wNON_pval"),
+                      c(round(CItable[1,2], 5), 
+                        round(CItable[1,7], 5),
+                        round(CItable[2,2], 5),
+                        round(CItable[2,7], 5))), 
+                file=paste0(out.dir, "/SelectionParameters_", suffix, ".txt"), sep="\t", row.names=FALSE, col.names=FALSE, append=TRUE, quote=FALSE)
+    
+    
+    
+    
+    ### 7. Plot mutation spectrum (DISABLED)
+    if (plot_spectrum) {
+        # Build the heatmap
+        rates = exp(coefficients(model))
+        names_vec = names(rates); names_vec[names_vec=="t"] = "TTT2TGT"
+        names(rates) = names_vec
+        rates = rates[-which(names_vec %in% c("wMIS","wNON"))]
+        
+        nts = c("A","C","G","T")
+        subs = c("C2A","C2G","C2T","T2A","T2C","T2G")
+        mut_spectrum = array(0,dim=c(8,24))
+        rates_list = names(rates)
+    
+        for (j in 1:length(subs)) {
+            
+            x = subs[j]
+            for (h in 1:length(nts)) {
+                
+                upstream_nt = nts[h]
+                for (k in 1:length(nts)) {
+                    
+                    downstream_nt = nts[k]
+                    trinuc1 = sprintf('%s%s%s2%s%s%s',upstream_nt,substr(x,1,1),downstream_nt,upstream_nt,substr(x,3,3),downstream_nt)
+                    trinuc2 = sprintf('%s%s%s2%s%s%s',toupper(comp(downstream_nt)),toupper(comp(substr(x,1,1))),toupper(comp(upstream_nt)),toupper(comp(downstream_nt)),toupper(comp(substr(x,3,3))),toupper(comp(upstream_nt)))     
+                    
+                    if (trinuc1 %in% rates_list) {
+                        r1 = rates[trinuc1]
+                    } else {
+                        r1 = 1
+                    }
+                    
+                    if (trinuc2 %in% rates_list) {
+                        r2 = rates[trinuc2]
+                    } else {
+                        r2 = 1
+                    }
+                    
+                    mut_spectrum[h,(j-1)*4+k] = r1
+                    mut_spectrum[4+h,(j-1)*4+k] = r2
+                }
+            }
+        }
+        
+        mut_spectrum = mut_spectrum/(sum(mut_spectrum))
+        
+        colnames(mut_spectrum) = rep(nts,6)
+        rownames(mut_spectrum) = rep(nts,2)
+    
+        library(lattice)
+        dev.new(height=2.9, width=7)
+        color.palette = colorRampPalette(c("white", "orange", "purple"))
+        pdf(paste0("~/Desktop/mutation_spectrum_unfolded_", suffix, ".pdf"), height=2.9, width=7)
+        levelplot(t(mut_spectrum[8:1,]), aspect="fill", col.regions=color.palette, scales=list(tck=0), xlab="3' base", ylab="5' base", panel = function(...){ 
+            panel.levelplot(...)
+            panel.abline(h = 4.5)
+            panel.abline(v = (1:5)*4+0.5) 
+        })
+        dev.off()
+    }
+    
+}
+poissdNdS.CanFam3(mutations, ref_seq, "germline_ND6", output)
+poissdNdS.CanFam3(mutations, ref_seq, "somatic_ND6", output)
+
+```
+
+
+
+```{r MT Haplogroups}
+
+
+# Mt Haplogroups vs Mt Genes
+require(xlsx)
+require(stringr)
+require(reshape2)
+require(ggplot2)
+
+haplo.summary<-read.xlsx2("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/VAF_4_9_17/Summary/2017-05-09_Haplotype_Summary_Overview.xlsx", 1, stringsAsFactors=FALSE)
+haplo.summary<-haplo.summary[-1,]
+
+unique.haplogroups<-unique(haplo.summary$Haplogroup)
+haplo.summary1<-matrix(ncol = 2, nrow = length(unique.haplogroups))
+for (i in 1:length(unique.haplogroups)){
+  haplo.data<-haplo.summary[which(haplo.summary$Haplogroup %in% unique.haplogroups[i]),]
+  haplo.summary1[i,1]<-unique.haplogroups[i]
+  haplo.summary1[i,2]<- paste(haplo.data$Defining.Variant.s., collapse = "; ")
+}
+haplo.summary1<-as.data.frame(haplo.summary1)
+colnames(haplo.summary1)<-c("Haplogroup", "Defining.Variant.s.")
+
+# Mutational Spectra
+somatic.variant<-str_split(haplo.summary1$Defining.Variant.s., ";")
+somatic.variant<-lapply(somatic.variant, 
+                        function(x){
+                          list.var<-gsub(" ", "", unlist(str_split(x, ",")))
+                          list.var<-unique(gsub("[[:alpha:]].*","", list.var))  })
+
+names(somatic.variant)<-haplo.summary1$Haplogroup
+
+# Somatic Variants List
+som.list.data<-t(do.call(rbind.data.frame, somatic.variant))
+som.list.data<-melt(som.list.data)[,-1]
+som.list.data<-unique(som.list.data)
+colnames(som.list.data)<-c("Haplogroup", "Pos")
+
+
+# MT Haplogroups:
+
+VEP.all.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/somatic/VEP_output_4_9_17.txt", stringsAsFactors = FALSE)
+
+VEP.all.somatic<-VEP.all.somatic[which(VEP.all.somatic$DISTANCE=="-"),]
+VEP.all.somatic<-VEP.all.somatic[-which(VEP.all.somatic$Consequence=="-"),]
+VEP.all.somatic$DN.DS<-ifelse(grepl("start|stop|missense", VEP.all.somatic$Consequence), "non-synonymous", "synonymous")
+VEP.all.somatic$Ref<-rapply(str_split(VEP.all.somatic$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.all.somatic$Ref<-str_split_fixed(VEP.all.somatic$Ref, "/", 2)[,1]
+VEP.all.somatic$Pos<-rapply(str_split(VEP.all.somatic$X.Uploaded_variation, "_"), function(x) x[2])
+
+
+somatic.var.genes<-merge(som.list.data, VEP.all.somatic[,c("SYMBOL", "Pos")], by = c("Pos"))
+
+
+ggplot(somatic.var.genes, aes(SYMBOL, fill = Haplogroup))+geom_bar()+
+  scale_fill_manual(values = c("#1F77B4", "#AEC7E8", "#FF7F0E", "#FFBB78",
+                               "#2CA02C", "#98DF8A", "#D62728", "#FF9896", 
+                               "#9467BD", rep("grey50", 13)))+
+  labs(x="", y = "Number of Variants", title = "Count of Variants for Mt Gene \n(Colored by Haplogroups)")+
+    theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+  
+
+
+
+
+```
+
