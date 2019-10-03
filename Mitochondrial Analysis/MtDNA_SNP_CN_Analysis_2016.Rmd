@@ -1,0 +1,1685 @@
+---
+title: 'Devil Mt Variant: SNP VAF Filtering and Plots'
+date: "2016-2019"
+output: html_document
+---
+
+This script was written to analyze and filter out the Mitochondrial variants called by the somatypus pipeline. For both matched/unmatched tumors and hosts, variants are classified as somatic, germline or both if it appears to be recurrent--and unknown (only found in unmatched tumors). VAF Plots are created for each sample based on these classifications and can be exported. Rough estimations of contamination levels are also calculated for each sample. Tumor/Host contamination are determined based on the VAF scores and depth of coverage. These calculations are exported at the end with the attached statistical analysis/graphs. A table is created at the end of this script that separates out the high and low contaminated samples. Note: working directories noted here will be different, depending on the locations of your input files.
+
+#### Libraries Needed:
+```{r Libraries}
+library(knitr)
+library(stringr)
+library(plyr)
+library(scales)
+library(xlsx)
+library(reshape2)
+```
+
+
+### Functions:
+```{r Functions for Exporting Data}
+save.xlsx <- function (file, ...) # export xlsx with individual sheets
+{
+  require(xlsx, quietly = TRUE)
+  objects <- list(...)
+  fargs <- as.list(match.call(expand.dots = TRUE))
+  objnames <- as.character(fargs)[-c(1, 2)]
+  nobjects <- length(objects)
+  for (i in 1:nobjects) {
+    if (i == 1)
+      write.xlsx(objects[[i]], file, sheetName = objnames[i])
+    else write.xlsx(objects[[i]], file, sheetName = objnames[i],
+                    append = TRUE)
+  }
+  print(paste("Workbook", file, "has", nobjects, "worksheets."))
+}
+
+```
+
+
+### Input Folders/Paths for Variant Filtering:
+```{r Input/Output Paths}
+# Output Path for Mt Variant Analysis
+Outputpath<-paste0('/Users/yk1/Documents/Tasmanian_Devil/11_9_18/')
+
+# Input is the vcf from Variant Caller (Somatypus/Somatypus.MT)
+Variant.VCFfile<-"/Users/yk1/Desktop/Genotyped_SNVs_final_3_4_2018.vcf"
+
+
+# Progress Reports from Sanger (each report must be in a .csv format)
+ProgressReppath<-"~/Documents/Tasmanian_Devil/Manifest/3999_Study/CSV_progress_reports/"
+
+```
+
+### Input Files/Folders for Contamination Calculation (based on whole genome):
+This preliminary calculation of contamination was conducted using bedtools coverage to calculate coverage in 10kb windows.  
+```{r Contamination Calculation}
+
+# File with each Supercontig name and length (in basepairs)
+contig.lengths = read.delim("~/Documents/Tasmanian_Devil/10_4_17/chr_lengths.txt")
+
+# Import a Bed file with supercontigs segmented into 10kb bins
+load("genome_pos.RData")
+
+
+# Input Bedtools Coverage results path: bedtools coverage using 10kb windows (bed file)
+TWGcoverage.dat.path<-'~/Documents/Tasmanian_Devil/CN/1284_Coverage/Tumor/'
+HWGcoverage.dat.path<-'~/Documents/Tasmanian_Devil/CN/1284_Coverage/Host/'
+
+
+```
+
+
+### Calling VCF and Reformatting
+The input file is the final.vcf SNP only file produced by Platypus revised for mitochondrial variant calling.
+
+```{r Calling VCF}
+# Set Working Directory:
+setwd(Outputpath);
+
+# Import the VCF
+variants <- read.delim(Variant.VCFfile, header=FALSE, skip=47)
+colnames(variants) <- as.character.numeric_version(variants[1,])
+variants <- variants[-1,]
+
+# Quick post-mitochondrial variant calling filter: remove 
+variants <- variants[-which(variants$FILTER %in% c("badReads", "MQ", "strandBias", "SC", "QD")),]
+
+
+kable(variants[1:3,1:10]) # show subset of variants dataframe
+```
+
+```{r Separate the VCF Metadata and the Variants Sample Data}
+## Separate the VCF Metadata and the Variants Sample Data
+
+# Variant Metadata
+variants.metadata <- variants[,1:9]
+kable(variants.metadata[1:3, 1:7]) # show subset of metadata
+
+# Sample Data
+variants.data <- variants[,10:ncol(variants)]
+
+kable(variants.data[1:4, 1:4]) # show subset of variants.data
+```
+
+
+
+### Calculating the VAF Score of Each Variant for Each Sample
+
+To calculate the Variant Allele Freq (VAF), the Number of reads covering variant location (NR) and Number of reads containing variant (NV) are extracted for each sample per variant.
+The VAF is calculated by NV/NR.
+
+```{r Calculate VAF Score}
+## Take NR field for each variant (row) and sample (col)
+variants.total.reads = t(apply(variants.data, 1, function(var) {  # for each row (variant) in variants.data
+  sapply(var, function(x) {  # for each element (sample) in the row
+    as.numeric(str_split_fixed(x, ":", 6)[,5])  # take element 5 of 6 (NR)
+  })
+}))
+
+
+## Take NV field for each variant (row) and sample (col)
+variants.supp.reads = t(apply(variants.data, 1, function(var) {  # for each row (variant) in variants.data
+  sapply(var, function(x) {  # for each element (sample) in the row
+    as.numeric(str_split_fixed(x, ":", 6)[,6])  # take element 6 of 6 (NV)
+  })
+}))
+
+
+## Take VAF (NV/NR) for each variant and sample
+variants.VAF = variants.supp.reads / variants.total.reads
+sum(is.na(variants.VAF)) # some values are going to be NA because NR=0; we'll make them 0
+variants.VAF[is.na(variants.VAF)] = 0
+sum(is.na(variants.VAF))
+#variants.VAF<-variants.VAF[,colSums(is.na(variants.VAF))<nrow(variants.VAF)] # remove rows with entire NA's
+
+```
+
+
+
+### Index Unmatched/Matched Tumors and Hosts
+
+The first is to separate the Tumours and Hosts. For the tumors, the tumors are further classified as 'matched' or 'unmatched' for tumor samples that do not have a matched host sample. For each matched tumor, the matching host is indexed for future comparisons. 
+
+```{r Indexing Matched/Unmatched Tumors}
+## Separate Tumor Samples
+tumours.idx <- grepl('T', colnames(variants.data)) # select for any TGC_IDs that contain 'T' (for Tumor)
+tumours <- gsub("\\-Devil","", colnames(variants.data)[tumours.idx]) # remove '-Devil' from the TGC_ID
+
+kable(tumours[1:3], caption = 'Tumours')
+
+
+## Separate Host Samples
+hosts.idx <- !tumours.idx
+hosts <- gsub("\\-Devil","", colnames(variants.data)[hosts.idx])
+
+kable(hosts[1:3], caption = 'Hosts')
+
+
+## Match the TGC_IDs of Hosts and Tumors
+match.tumor.to.host.indexes <- match(gsub("[[:alpha:]].*", "", tumours), gsub("[[:alpha:]].*", "", hosts)) 
+# indexes (which column) contains the match the Tumour tissue for the associated TGC_ID
+match.host.to.tumor.indexes <- match(gsub("[[:alpha:]].*", "", hosts), gsub("[[:alpha:]].*", "", tumours)) 
+# indexes (which column) contains the match the Host tissue for the associated TGC_ID
+
+
+## Creating the Index Table for the Tumours
+TumoursIDs <- as.data.frame(cbind(tumours, which(tumours.idx), as.character(match.tumor.to.host.indexes)))
+colnames(TumoursIDs) <- c('tumours', 'tumours.indexes', 'matched.host.indexes')
+TumoursIDs$tumours.indexes <- as.numeric(as.character(TumoursIDs$tumours.indexes)) 
+# identifies column the Tumor Sample is found in the variants.data
+TumoursIDs$matched.host.indexes <- as.numeric(as.character(TumoursIDs$matched.host.indexes))
+# identifies column the Host Sample is found in the variants.data
+
+kable(TumoursIDs[1:5,]) 
+
+
+
+## Creating the Index Table for the Hosts:
+
+# though slightly repetitive, an index of the host samples to index the host samples in the variants.data
+HostsIDs <- as.data.frame(cbind(hosts, which(hosts.idx), as.character(match.host.to.tumor.indexes)))
+colnames(HostsIDs)<-c('hosts', 'hosts.indexes', 'matched.tumor.indexes')
+HostsIDs$hosts.indexes <- as.numeric(as.character(HostsIDs$hosts.indexes)) 
+# identifies column the Host Sample is found in the variants.data
+HostsIDs$matched.tumor.indexes <- as.numeric(as.character(HostsIDs$matched.tumor.indexes))
+# identifies column the Tumor Sample is found in the variants.data
+
+kable(HostsIDs[1:5,])
+```
+
+
+
+### Filtering Variants of Hosts based on the VAF scores
+
+For all hosts, we set the VAF filter so that any variants with a VAF <.2 will be excluded in the Final Filtered Variant Table.
+
+```{r Filter variants of Hosts}
+# For each host, filter out variants:
+
+variants.VAF.H.total<- as.data.frame(variants.VAF[, HostsIDs$hosts.indexes ])
+# select all host samples from the intial variant VAF table
+
+variants.VAF.H.filtered = as.data.frame(t(apply(variants.VAF.H.total, 1,  function(Hvar){ 
+    as.numeric(ifelse(Hvar<.2, NA, Hvar)) # for each row (variant), if the VAF<.2, convert them to NA
+  })))
+colnames(variants.VAF.H.filtered)<- colnames(variants.VAF.H.total)
+rownames(variants.VAF.H.filtered)<-variants.metadata[,2]
+kable(variants.VAF.H.filtered[1:4,1:4])
+```
+
+
+### Filtering Variants of Tumours based on the VAF scores
+
+For all tumours, we set the VAF filter so that any VAF <.2 will be excluded in the Final Filtered Variant Table. The filters set for matched Tumours and unmatched Tumours are slightly different. See below for additional details.
+
+
+#### Filtering Matched Tumours
+For Matched Tumours, the variants were filtered for any germline variants--based on the variants found within the matching hosts with .35<VAF,and VAF<.9 in the tumors, in order to select for somatic variants. The .35 is an arbitrary threshold that was created in case there were any high level tumor variants found in the  host due to tumor contamination of the host. Any variants with VAF<.2 was excluded as these variants were likely cross-contamination.
+
+```{r Filter Variants of Matched Tumors}
+## Create a variant table of the matched tumors and a variant table of the associated matched hosts:
+variants.VAF.Tmatch.index<-subset(TumoursIDs, is.na(TumoursIDs$matched.host.indexes)=='FALSE')
+
+variants.VAF.Tmatched.Total<-as.data.frame(variants.VAF[,TumoursIDs[which(is.na(TumoursIDs$matched.host.indexes)=='FALSE'), 2]]) 
+  # table of variants of Tumour samples
+variants.VAF.Hmatched.Total<-as.data.frame(variants.VAF.H.total[,TumoursIDs[which(is.na(TumoursIDs$matched.host.indexes)=='FALSE'), 3]]) 
+  # table of variants of associated Host samples
+
+kable(variants.VAF.Tmatched.Total[1:4,1:4])
+
+
+kable(variants.VAF.Hmatched.Total[1:4,1:4])
+```
+
+
+
+```{r Filter Variants of Matched Tumors part 2.1}
+## Filter variants for the matched Tumors based on the VAFs:
+variants.VAF.Tmatched.filtered = matrix(nrow = nrow(variants.VAF.Tmatched.Total), 
+                                        ncol = ncol(variants.VAF.Tmatched.Total))
+
+
+```
+
+
+
+```{r Filter Variants of Matched Tumors part 3}
+## Filter variants for the matched Tumors based on the VAFs:
+variants.VAF.Tmatched.filtered = matrix(nrow = nrow(variants.VAF.Tmatched.Total), ncol = ncol(variants.VAF.Tmatched.Total))
+
+for(i in 1:nrow(variants.VAF.Tmatched.Total)){
+  for(x in 1:ncol(variants.VAF.Tmatched.Total)){
+    variants.VAF.Tmatched.filtered[i,x] = ifelse(variants.VAF.Tmatched.Total[i,x]>.2, # Filter out variants that have VAF<.2 and convert them to NA
+                                                 ifelse(variants.VAF.Hmatched.Total[i,x]>.35 & variants.VAF.Tmatched.Total[i,x]<.9, NA,variants.VAF.Tmatched.Total[i,x]), NA) 
+    # For variants with VAF >.2, check the matching host variants and if the variant is also found in the matched host with .35>VAF and if in the tumor, the VAF <.9, convert them to NA.
+  }
+}
+colnames(variants.VAF.Tmatched.filtered)<-colnames(variants.VAF.Tmatched.Total)
+
+
+kable(variants.VAF.Tmatched.filtered[1:4,1:4])
+
+```
+
+
+#### Initial Filtering of Unmatched Tumours (VAF <.2)
+#### (Part 1)
+For each unmatched Tumour sample, we set the filter so than any variants with VAF <.2 is excluded in the final table. Further filtering was done after selecting likely somatic/germline variants through comparisons with the matched tumors/hosts and by manual visualization of the VAF plots (see Part 2 for further filtering of variants for unmatched tumors).
+
+```{r Filter variants of Unmatched Tumours VAF<.2}
+## For each Unmatched Tumour sample, filter variants:
+
+variants.VAF.Tunmatched.Total<-as.data.frame(variants.VAF[,TumoursIDs[which(is.na(TumoursIDs$matched.host.indexes)=='TRUE'), 2]]) 
+  # select samples that have NA for the matched host 
+
+
+variants.VAF.Tunmatched.filtered <- as.data.frame(t(apply(variants.VAF.Tunmatched.Total, 1, function(var){
+  as.numeric(ifelse(var<.2, NA, var)) # Filter out (VAF< .2) and convert them to NA
+})))
+colnames(variants.VAF.Tunmatched.filtered)<-colnames(variants.VAF.Tunmatched.Total)
+
+kable(variants.VAF.Tunmatched.filtered[1:4,1:4])
+```
+
+#### Final Table After Filtering
+```{r Final Filtered Variant Table}
+
+Final.Filtered.Table<-cbind(variants.VAF.Tmatched.filtered, variants.VAF.Tunmatched.filtered, variants.VAF.H.filtered)
+rownames(Final.Filtered.Table)<-paste0(variants.metadata[,2], variants.metadata[,4], '>', variants.metadata[,5])
+
+###UnFiltered Table
+rownames(variants.VAF)<-paste0(variants.metadata[,2], variants.metadata[,4], '>', variants.metadata[,5])
+
+##Unfiltered Table >.2
+variants.VAF.1<-as.data.frame(t(apply(variants.VAF, 1, function(var){
+  as.numeric(ifelse(var<.2, NA, var)) # Filter out (VAF< .2) and convert them to NA
+})))
+colnames(variants.VAF.1)<-colnames(variants.VAF)
+
+dir.create("Variant_Summary")
+setwd(paste0(getwd(), '/Variant_Summary'))
+
+write.csv(Final.Filtered.Table, paste0('Final.Filtered.Table_Somatypus_', Sys.Date(), '.csv'))
+
+write.csv(variants.VAF.1, paste0('Final.Unfiltered.Table_Somatypus_', Sys.Date(), '.csv'))
+```
+
+### Count Variants Based on Initial Filters
+
+#### Based on Initial Filtering
+Based on the initial filters that we established (different for matched tumors, unmatched tumors, and hosts), we count the number of samples that have each variant. Note: some variants will have 0 as these variants were called by Somatypus; however, they had a VAF score <.2.
+
+```{r Count Number of Samples for Each Specific Variant after Filtering}
+
+Variant.label<-paste0(variants.metadata[,2], variants.metadata[,4], '>', variants.metadata[,5])
+  # name of each variant: pos ref>alt
+
+## Count the No. of Matched Tumors with Variant
+Count.Variants.Tumor.matched<-as.data.frame(apply(variants.VAF.Tmatched.filtered, 1, function(x) {length(which(!is.na(x)))})) # Count number of matched tumors containing a specific variant (each row)
+rownames(Count.Variants.Tumor.matched)<-Variant.label
+colnames(Count.Variants.Tumor.matched)<-'MatchedTumorCount'
+
+
+## Count the No. of Unmatched Tumors with Variant
+Count.Variants.Tumor.unmatched<-as.data.frame(apply(variants.VAF.Tunmatched.filtered, 1, function(x) {length(which(!is.na(x)))})) # Count number of unmatched tumors containing a specific variant (each row)
+rownames(Count.Variants.Tumor.unmatched)<-Variant.label
+colnames(Count.Variants.Tumor.unmatched)<-'UnmatchedTumourCount'
+
+
+## Count the No. of Host with Variant
+Count.Variants.Host<-as.data.frame(apply(variants.VAF.H.filtered, 1, function(x) {length(which(!is.na(x)))}))
+# Count number of hosts containing a specific variant (each row)
+rownames(Count.Variants.Host)<-Variant.label
+colnames(Count.Variants.Host)<-'HostCount'
+
+
+## Combine all Counts to calculate Total Counts for each Variant
+Total<-Count.Variants.Tumor.matched + Count.Variants.Tumor.unmatched + Count.Variants.Host
+rownames(Total)<-Variant.label
+colnames(Total)<-'TotalCount'
+
+
+VariantCounts<-cbind(Count.Variants.Tumor.matched, Count.Variants.Tumor.unmatched,  Count.Variants.Host, Total)
+
+
+kable(VariantCounts[1:4,])
+```
+
+
+### Categorize Variants Based on Variant Counts
+
+Here, we categorize variants as somatic, germline, unknown, or sequencing errors, based on the number of samples that fit into each category. Note, as there is the potential for recurrent mutations, variants found in both matched hosts and tumors (not unknowns) were added to both somatic and germline list. Variants where it was not found in any samples after filtering are placed in the excluded variants list. Variants that should be checked (found in only 1 sample) are also listed.
+
+```{r Classification of the Called Variants Version 1}
+
+## Somatic Variants
+var.T.somatic<- VariantCounts[which(VariantCounts[,1]>=1 & (VariantCounts[,4]/ncol(variants.data)<.95)),]
+  # at least 1 matched tumor sample contains this variant (includes variants found in both tumors and hosts)
+
+## Germline Variants
+var.T.germline<- VariantCounts[which(VariantCounts[,3]>=1 & (VariantCounts[,4]/ncol(variants.data)<.95)),]
+  # at least 1 host sample contains this variant, exclude seq error (see below for criterion for seq error).
+
+
+## Unclassified Variants (to check)
+var.T.Unknown<- VariantCounts[which(VariantCounts[,3]==0 & VariantCounts[,1]==0 & VariantCounts[,2]>0),]
+  # variant is only found in the unmatched tumor 
+
+## Possible Somatic Variants
+var.poss.T.somatic<-(VariantCounts[which((VariantCounts[,3]/VariantCounts[,1]<=.1) & VariantCounts[,3]>=1),])
+  # if variant is found in less than 10% of host samples, it is categorized as a possible somatic variant as it is possible the host is tumor contaminated
+rownames(var.poss.T.somatic)<-rownames(VariantCounts)[which((VariantCounts[,3]/VariantCounts[,1]<=.1) & VariantCounts[,3]>=1)]
+
+
+## Possible Sequencing Error Variants
+var.Seq.error<-VariantCounts[which(VariantCounts[,4]/ncol(variants.data)>=.95),]
+  # if variants are in almost all samples (>95%) then it is categorized as a potential sequencing error
+
+
+## Excluded Variants
+var.excluded<-VariantCounts[which(VariantCounts[,4]==0),]
+  # variants that after filtering, were not found in any samples
+
+## Variants found only in 1 sample
+var.to.check<-VariantCounts[which(VariantCounts[,4]==1),]
+  # variants only found in 1 sample
+  
+  ###Identify which sample carry the variant and the associated VAF score (found only in 1 sample)
+  samples.var.to.check<-matrix(ncol = 3, nrow = nrow(var.to.check))
+    for (i in 1:nrow(var.to.check)){
+      x = var.to.check[i,]
+      variant<-Final.Filtered.Table[which(Variant.label == rownames(x)),]
+      samples.var.to.check[i,1]<-rownames(x)
+      samples.var.to.check[i,2]<-Final.Filtered.Table[which(Variant.label == rownames(x)), which(!is.na(variant) & variant>.2)]
+      samples.var.to.check[i,3]<-colnames(Final.Filtered.Table)[which(!is.na(variant) & variant>.2)]
+    }
+  rownames(samples.var.to.check)<-samples.var.to.check[,1]
+  samples.var.to.check<-samples.var.to.check[,-1]
+  colnames(samples.var.to.check)<-c('VAF', 'TGC_ID')
+
+# LIBRARY XLSX NO LONGER WORKS ON MY COMPUTER
+save.xlsx("VariantCounts_Somatypus.xlsx", var.T.somatic, var.T.germline, var.T.Unknown, var.poss.T.somatic, var.Seq.error, var.excluded, var.to.check, samples.var.to.check, VariantCounts)
+
+#Save as csvs.
+write.csv(var.T.somatic, file  = "var.T.somatic.csv")
+write.csv(var.T.germline, file  = "var.T.germline.csv")
+write.csv(var.T.Unknown, file  = "var.T.Unknown.csv")
+write.csv(var.poss.T.somatic, file  = "var.poss.T.somatic.csv")
+write.csv(var.Seq.error, file  = "var.Seq.error.csv")
+write.csv(var.excluded, file  = "var.excluded.csv")
+write.csv(var.to.check, file  = "var.to.check.csv")
+write.csv(samples.var.to.check, file  = "samples.var.to.check.csv")
+write.csv(VariantCounts, file  = "VariantCounts.csv")
+
+
+```
+
+
+##### This version separates the possible recurrent mutations into a separate excel sheet and for graphing purposes:
+In this version, any variant that was found in tumors and hosts, they are classified as a germline variant. However, in a separate sheet, called variants.in.tumorandhosts, these variants are noted down for further reference in case these are recurrent mutations that have occurred. 
+
+```{r Classification of the Called Variants Version 2: For graphing}
+## Somatic Variants
+var.T.somatic<- VariantCounts[which(VariantCounts[,3]==0 & VariantCounts[,1]>=1),]
+  # at least 1 matched tumor sample contains this variant and not found in any host
+
+## Germline Variants
+var.T.germline.part1<- rbind(VariantCounts[which(VariantCounts[,3]>1 & (VariantCounts[,4]/ncol(variants.data)<.95)),])
+  # at least 1 host sample contains this variant, exclude seq error (see below for criterion for seq error), and not found in tumors.
+var.T.germline.pos<-as.numeric(str_split_fixed(rownames(var.T.germline.part1), "[[:alpha:]]", 2)[,1])
+var.T.germline<-var.T.germline.part1[which(var.T.germline.pos>500 & var.T.germline.pos<16127),]
+  # remove variants that are less/more than 500bp from each end in this region
+
+
+## Unclassified Variants (to check)
+var.T.Unknown<- VariantCounts[which(VariantCounts[,3]==0 & VariantCounts[,1]==0 & VariantCounts[,2]>0),]
+var.T.Unknown<-rbind(var.T.Unknown, VariantCounts[which(VariantCounts[,3]==1 & VariantCounts[,1]==1 & VariantCounts[,2]==1),])
+  # variant is only found in the unmatched tumor 
+var.H.Unknown<-VariantCounts[which(VariantCounts[,3]==1 & VariantCounts[,4]<=3),]
+  # variant is only found in one host and in less than 2 tumors (matched or unmatched)
+
+
+## Possible Somatic Variants
+var.poss.T.somatic<-(VariantCounts[which((VariantCounts[,3]/VariantCounts[,1]<=.1) & VariantCounts[,3]>=1),])
+  # if variant is found in less than 10% of host samples, it is categorized as a possible somatic variant as it is possible the host is tumor contaminated
+
+
+## Variants found in both Matched Tumor and Host (possible recurrent mutations)
+var.in.hostandtumor<-VariantCounts[which(VariantCounts[,1]>=1 & VariantCounts[,3]>=1 & VariantCounts[,4]/ncol(variants.data)<.95),]
+  # variants found in both tumor and hosts (to later verify if it is a recurrent mutation)
+
+
+## Possible Sequencing Error Variants
+var.Seq.error<-VariantCounts[which(VariantCounts[,4]/ncol(variants.data)>=.95),]
+var.Seq.error<-rbind(var.Seq.error, var.T.germline.part1[which(var.T.germline.pos<=500 | var.T.germline.pos>=16127),])
+  # if variants are in almost all samples (>95%) then it is categorized as a potential sequencing error
+  # variants within the first/last 500bp of the genome with low VAF
+
+
+### Variants to Check through IGV:
+
+## Excluded Variants
+var.excluded<-VariantCounts[which(VariantCounts[,4]==0),]
+  # variants that after filtering, were not found in any samples
+
+
+## Variants found only in 1 sample
+var.to.check<-VariantCounts[which(VariantCounts[,4]==1),]
+  # variants only found in 1 sample
+  
+  ### Identify which sample carry the variant and the associated VAF score (found only in 1 sample)
+  samples.var.to.check<-matrix(ncol = 3, nrow = nrow(var.to.check))
+    for (i in 1:nrow(var.to.check)){
+      x = var.to.check[i,]
+      variant<-Final.Filtered.Table[which(Variant.label == rownames(x)),]
+      samples.var.to.check[i,1]<-rownames(x)
+      samples.var.to.check[i,2]<-Final.Filtered.Table[which(Variant.label == rownames(x)), which(!is.na(variant) & variant>.2)]
+      samples.var.to.check[i,3]<-colnames(Final.Filtered.Table)[which(!is.na(variant) & variant>.2)]
+    }
+  rownames(samples.var.to.check)<-samples.var.to.check[,1]
+  samples.var.to.check<-samples.var.to.check[,-1]
+  colnames(samples.var.to.check)<-c('VAF', 'TGC_ID')
+  
+  ### Identify which host samples carry low VAF variant and the associated VAF score
+    samples.var.host.low.vaf<-matrix(ncol = 3, nrow = 0, dimnames =list(NULL, c('Host.Sample', 'Variant', 'VAF')))
+    for(i in 1: ncol(variants.VAF.H.filtered)){
+      if(length(which(variants.VAF.H.filtered[,i]<.4 & variants.VAF.H.filtered[,i]>.2)>0)){
+        var.list.host<-which(variants.VAF.H.filtered[,i]<.4 & variants.VAF.H.filtered[,i]>.2)
+        var.list.host.final<-cbind(colnames(variants.VAF.H.filtered)[i], Variant.label[var.list.host], variants.VAF.H.filtered[var.list.host, i])
+      samples.var.host.low.vaf<-rbind(samples.var.host.low.vaf, var.list.host.final)
+      }
+    }
+  
+  cbind.fill <- function(...){
+    nm <- list(...) 
+    nm <- lapply(nm, as.matrix)
+    n <- max(sapply(nm, nrow)) 
+    do.call(cbind, lapply(nm, function (x) 
+        rbind(x, matrix(, n-nrow(x), ncol(x))))) 
+}
+    
+    
+### Only one host sample and found in less than 2 tumors
+    samples.var.one.host<-matrix(ncol = 3, nrow = 0, dimnames =list(NULL, c('Sample', 'Variant', 'VAF')))
+        for(x in 1: nrow(var.H.Unknown)){
+        var<-grep(rownames(var.H.Unknown)[x], Variant.label)
+        variant<-Variant.label[var]
+        var.hosts<-variants.VAF.H.filtered[var, which(is.na(variants.VAF.H.filtered[var,])==FALSE)]
+        samples.var.one.host<-rbind(samples.var.one.host, cbind(colnames(variants.VAF.H.filtered)[which(is.na(variants.VAF.H.filtered[var,])==FALSE)], variant, var.hosts))
+        var.tumors<-variants.VAF.Tmatched.filtered[var, which(is.na(variants.VAF.Tmatched.filtered[var,])==FALSE)]
+        var.tumors1<-variants.VAF.Tunmatched.filtered[var, which(is.na(variants.VAF.Tunmatched.filtered[var,])==FALSE)]
+        if(length(var.tumors)>0){
+        samples.var.one.host<-rbind(samples.var.one.host, cbind(colnames(variants.VAF.Tmatched.filtered)[which(is.na(variants.VAF.Tmatched.filtered[var,])==FALSE)], variant, var.tumors))}
+        if(length(var.tumors1)>0){
+        samples.var.one.host<-rbind(samples.var.one.host, cbind(colnames(variants.VAF.Tunmatched.filtered)[which(is.na(variants.VAF.Tunmatched.filtered[var,])==FALSE)], variant, var.tumors1))}
+      }
+    
+    
+## Double check: To make sure that no variant was excluded in the classifications
+check<-rbind(var.excluded, var.T.somatic, var.T.germline, var.T.Unknown, var.poss.T.somatic, var.Seq.error)
+print(ifelse(nrow(check) == nrow(variants.data), 'All Variants Included', 'Missing Variants'))
+##sort of checkpoint: if variants were missed based on these classifications, will print out 'Missing Variants'
+
+
+#save.xlsx("VariantCounts_recurrentmut_sep_Somatypus1.xlsx", var.T.somatic, var.T.germline, var.T.Unknown, var.poss.T.somatic, var.Seq.error, var.excluded, var.in.hostandtumor, var.to.check, samples.var.one.host, samples.var.to.check, samples.var.host.low.vaf, VariantCounts)
+
+```
+
+
+
+### Create VAF Plots based on Classification of Variants
+
+#### Adding Sample Location for the VAF Plots
+Sample Locations for each Sample is taken from the Progress Reports. These files should be in the .csv format.
+
+```{r Extract Sample Locations}
+setwd(ProgressReppath)
+
+temp = list.files(ProgressReppath, pattern="*.csv")
+
+Dataproc = do.call(rbind, lapply(temp, function(x) read.csv(x, stringsAsFactors = FALSE)[,c("Supplier.Sample.Name", "Plate", "Well", "Geographical.Region","Supplier.Volume", "Concentration","Cohort")]))
+sample.location = Dataproc[, c(1, 4)]
+sample.location[,1]<-gsub("\\-Devil","", sample.location[,1]) # remove '-Devil'
+sample.location[,2]<-gsub("/", "or", sample.location[,2])
+
+
+# Change this slightly and use the sample locations from the sample database
+sample.location <- read.csv("~/Documents/Tasmanian_Devil/sample database/Devil sample database_update_2_7_18.csv", stringsAsFactors=FALSE)
+
+sample.location<-sample.location[,c("TCG_ID", "Location")]
+
+
+```
+
+
+#### Function for Indexing Variant Classifications for VAF Plots
+
+```{r Index the Variant Classes}
+Labelname<-function(x, y){ # x is the list of variants that are classified in a specific category
+  test<-as.matrix(1:nrow(x)) 
+  for (i in 1:nrow(x)){
+    test[i]=which(rownames(x)[i] == y) # identify which row in the VAF data contains the specific variant for indexing
+  }
+  return(test)
+}
+
+## Indexing the row in which variants classified as somatic, germline, unknown, etc. are found in the VAF data
+var.somatic.index<-Labelname(var.T.somatic, Variant.label)
+var.germline.index<-Labelname(var.T.germline, Variant.label)
+var.unknown.index<-Labelname(var.T.Unknown, Variant.label)
+var.poss.somatic.index<-Labelname(var.poss.T.somatic, Variant.label)
+var.seqerr.index<-Labelname(var.Seq.error, Variant.label)
+
+
+```
+
+
+#### VAF Plots Post-Filtering: Matched Tumors
+```{r Post-Filtering VAF Plots: Matched Tumors}
+
+setwd(Outputpath)
+  # set working directory
+
+
+Tindex<-gsub("-Devil", "", colnames(variants.VAF.Tmatched.filtered))
+  # Create Index Name for the Matched Tumor Samples
+
+
+## Function for Plotting VAF Plots for Matched Tumors
+
+BAFplotsTmatched.filtered<- function(y) {
+  VAFs.sampleTfiltered <- as.numeric(as.character(variants.VAF.Tmatched.filtered[,y]));
+  VAFs.sample<-as.numeric(as.character(variants.VAF.Tmatched.Total[,y]));
+  z = match(gsub("[[:alpha:]].*", "", Tindex[y]), gsub("[[:alpha:]].*", "", hosts));
+    # match the TGC_ID of the tumor and matching host
+  VAFs.H<-as.numeric(as.character(variants.VAF.H.filtered[,z]));
+
+  Pos = as.numeric(as.character(variants.metadata[,2]));
+  
+  # plot the 'somatic' variants. The filtered matched tumor table excludes all variants found in matched host. 
+  # Also excluded the var.seq err.
+  plot(Pos[-var.seqerr.index], VAFs.sampleTfiltered[-var.seqerr.index], xlim=c(1, 16627), 
+       ylim=c(0,1), xlab='Position in mitochondrial genome', ylab='VAF (allele fraction)', pch = 16, cex = 1.4, col = alpha('blue', 0.6))
+  
+  # plot the 'germline' variants. Grey: <.2, Red: found in host (>.2 or over). 
+  par(new = T)
+  colour.variants1<-ifelse(is.na(VAFs.H[-which(!is.na(VAFs.sampleTfiltered))]), 'grey', 'red')
+  plot(Pos[-which(!is.na(VAFs.sampleTfiltered))], VAFs.sample[-which(!is.na(VAFs.sampleTfiltered))], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha(colour.variants1, .5));
+  
+  # plot the 'sequencing error' variants in grey
+  par(new = T)
+  plot(Pos[var.seqerr.index], VAFs.sample[var.seqerr.index], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('grey', .8));
+  
+  # line for cross-contamination at .2 VAF
+  abline(h = .2, lty = 2);
+  
+  # mean line for Host contamination (exclude sequencing error variants, based on filtered Host (VAF>.2))
+  VAFs.H.noseqerr<-VAFs.H[-var.seqerr.index];
+  VAFs.H.NonNA<-which(VAFs.H.noseqerr>.2); 
+  VAFs.sample.H.noseqerr<-VAFs.sample[-var.seqerr.index]
+  if(length(VAFs.sample.H.noseqerr[VAFs.H.NonNA])>0 & mean(VAFs.sample.H.noseqerr[VAFs.H.NonNA])>.2){abline(h = mean(VAFs.sample.H.noseqerr[VAFs.H.NonNA]), lty = 2, col = 'red')};
+  
+  # mean line for Tumor line (excluding sequencing error variants, based on filtered Tumor sample). Color: blue
+  VAFs.sample.noseqerr<-VAFs.sampleTfiltered[-var.seqerr.index]
+  VAFs.sample.NonNA<-which(VAFs.sample.noseqerr>0);
+  abline(h = mean(VAFs.sample.noseqerr[VAFs.sample.NonNA]), lty = 2, col = 'blue');
+  
+  # line denoting VAF of 1
+  abline(h = 1, lty = 2);
+  
+  # label each variant
+  text(Pos, VAFs.sample, labels = Variant.label, pos = 2, cex = .5);
+  
+  #title with estimation of host/tumor
+  title(main = paste0(Tindex[y], ' - ', sample.location[match(gsub("[[:alpha:]].*", "", Tindex)[y], sample.location[,1]), 2], ' matched MT VAF  T: ', round(median(VAFs.sample.noseqerr[VAFs.sample.NonNA]), 2), ' H: ', if(length(VAFs.sample.H.noseqerr[VAFs.H.NonNA])>0& median(VAFs.sample.H.noseqerr[VAFs.H.NonNA])>.2){round(median(VAFs.sample.H.noseqerr[VAFs.H.NonNA]), 2)}else{'NA'}));
+}
+
+
+
+
+## Export the plots for each Matched Tumor Sample
+
+dir.create("MatchedTumor_VAF")
+setwd(paste0(getwd(), '/MatchedTumor_VAF'))
+
+   pdf(paste0(Sys.Date(), 'Matched_Tumor_MT_VAF_Filtered Plot.pdf'), 7, 5)
+ for (i in 1:length(Tindex)){
+   BAFplotsTmatched.filtered(i)
+ }
+      dev.off()
+```
+
+#### VAF Plots Post-Filtering: Unmatched Tumors
+```{r Post-Filtering VAF Plots: Unmatched Tumors}
+
+setwd(Outputpath)
+
+dir.create("UnMatchedTumor_VAF")
+setwd(paste0(getwd(), '/UnMatchedTumor_VAF'))
+
+## Identify Unmatched TUmors
+Tunmatched.name.filtered.index <- colnames(variants.VAF.Tunmatched.filtered)
+Tunmatched.name.filtered.index <- gsub("-Devil", "", Tunmatched.name.filtered.index);
+
+
+## add sample locations to Tunmatched.name.filtered.index 
+Tunmatched.location.index<-as.matrix(1:length(Tunmatched.name.filtered.index));
+for (i in 1:length(Tunmatched.name.filtered.index)){
+    Tunmatched.location.index[i]<-sample.location[match(gsub("[[:alpha:]].*", "", Tunmatched.name.filtered.index)[i], sample.location[,1]), 2]}                            
+Tunmatched.filtered.final<-cbind(Tunmatched.name.filtered.index, Tunmatched.location.index);
+
+
+## Function for Plotting VAF Plots for Unmatched Tumors
+  pdf(paste0(Sys.Date(), '_UnmatchedTumor_MT_VAF_Plot_AllHost1.pdf'), 7, 5)
+for (y in 1:nrow(Tunmatched.filtered.final)){
+  Pos = as.numeric(as.character(variants.metadata[,2]));
+  
+  # plot somatic variants
+  plot(Pos[var.somatic.index], variants.VAF.Tunmatched.filtered[var.somatic.index,y], xlim=c(1, 16627), ylim=c(0,1), xlab='Position in mitochondrial genome', ylab='VAF (allele fraction)', pch = 16, cex = 1.4, col = alpha('#4D52E8', 0.8))
+ 
+  # plot poss.somatic variants
+  par(new=T)
+  plot(Pos[var.poss.somatic.index], variants.VAF.Tunmatched.filtered[var.poss.somatic.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('blue', 0.5)); 
+  
+  # plot germline variants
+  par(new=T)
+  var.col<-ifelse(variants.VAF.Tunmatched.Total[var.germline.index,y]>0, 'red', 'gray')
+  plot(Pos[var.germline.index], variants.VAF.Tunmatched.Total[var.germline.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha(var.col, 0.5)); 
+  
+  # plot poss. seq error variants
+  par(new=T)
+  plot(Pos[var.seqerr.index], variants.VAF.Tunmatched.filtered[var.seqerr.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('black', 0.5));
+  
+  # plot unclassified variants
+  par(new=T)
+  plot(Pos[var.unknown.index], variants.VAF.Tunmatched.filtered[var.unknown.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('#FFBF00', 0.5));
+  
+  # plot cross-contamination threshold (.2)
+  abline(h = .2, lty = 2);
+  
+  # plot mean line based on somatic variants
+  somatic.sample<-variants.VAF.Tunmatched.filtered[rbind(var.somatic.index, var.poss.somatic.index),y]
+  abline(h = mean(somatic.sample[which(!is.na(somatic.sample))]), lty = 2, col = 'blue');
+  
+  # plot median line based on germline variants
+  germline.sample<-variants.VAF.Tunmatched.filtered[var.germline.index,y]
+  abline(h = mean(germline.sample[which(!is.na(germline.sample) & germline.sample>=.2)]), lty = 2, col = 'red');
+  
+  # plot line at 1
+  abline(h = 1, lty = 2);
+  
+  # label each variant
+  text(Pos, variants.VAF.Tunmatched.Total[,y], labels = Variant.label, pos = 2, cex = .5);
+  
+  # title of plot
+  title(main = paste0(Tunmatched.filtered.final[y,1], ' - ', Tunmatched.filtered.final[y,2],' Unmatched MT VAF with Hosts T:', round(mean(somatic.sample[which(!is.na(somatic.sample))]),2), ' H: ', round(median(germline.sample[which(!is.na(germline.sample) & germline.sample>0)]),2)))
+}
+  dev.off()
+```
+
+#### VAF Plots of Tumors (Remaining)
+```{r}
+
+haplos <- read.csv("~/phylo_trees/haplos.csv", stringsAsFactors=FALSE)
+
+
+## Identify Unmatched TUmors
+Tunmatched.name.filtered.index <- colnames(variants.VAF.Tunmatched.filtered)
+Tunmatched.name.filtered.index <- gsub("-Devil", "", Tunmatched.name.filtered.index);
+
+
+## add sample locations to Tunmatched.name.filtered.index 
+Tunmatched.location.index<-as.matrix(1:length(Tunmatched.name.filtered.index));
+for (i in 1:length(Tunmatched.name.filtered.index)){
+    Tunmatched.location.index[i]<-sample.location[match(gsub("[[:alpha:]].*", "", Tunmatched.name.filtered.index)[i], sample.location[,1]), 2]}                            
+Tunmatched.filtered.final<-cbind(Tunmatched.name.filtered.index, Tunmatched.location.index);
+
+
+## Function for Plotting VAF Plots for Unmatched Tumors
+  pdf(paste0(Sys.Date(), '_UnmatchedTumor_MT_VAF_Plot_AllHost1.pdf'), 7, 5)
+for (y in 1:nrow(Tunmatched.filtered.final)){
+  Pos = as.numeric(as.character(variants.metadata[,2]));
+  
+  # plot somatic variants
+  plot(Pos[var.somatic.index], variants.VAF.Tunmatched.filtered[var.somatic.index,y], xlim=c(1, 16627), ylim=c(0,1), xlab='Position in mitochondrial genome', ylab='VAF (allele fraction)', pch = 16, cex = 1.4, col = alpha('#4D52E8', 0.8))
+ 
+  # plot poss.somatic variants
+  par(new=T)
+  plot(Pos[var.poss.somatic.index], variants.VAF.Tunmatched.filtered[var.poss.somatic.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('blue', 0.5)); 
+  
+  # plot germline variants
+  par(new=T)
+  var.col<-ifelse(variants.VAF.Tunmatched.Total[var.germline.index,y]>0, 'red', 'gray')
+  plot(Pos[var.germline.index], variants.VAF.Tunmatched.Total[var.germline.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha(var.col, 0.5)); 
+  
+  # plot poss. seq error variants
+  par(new=T)
+  plot(Pos[var.seqerr.index], variants.VAF.Tunmatched.filtered[var.seqerr.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('black', 0.5));
+  
+  # plot unclassified variants
+  par(new=T)
+  plot(Pos[var.unknown.index], variants.VAF.Tunmatched.filtered[var.unknown.index,y], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('#FFBF00', 0.5));
+  
+  # plot cross-contamination threshold (.2)
+  abline(h = .2, lty = 2);
+  
+  # plot mean line based on somatic variants
+  somatic.sample<-variants.VAF.Tunmatched.filtered[rbind(var.somatic.index, var.poss.somatic.index),y]
+  abline(h = mean(somatic.sample[which(!is.na(somatic.sample))]), lty = 2, col = 'blue');
+  
+  # plot median line based on germline variants
+  germline.sample<-variants.VAF.Tunmatched.filtered[var.germline.index,y]
+  abline(h = mean(germline.sample[which(!is.na(germline.sample) & germline.sample>=.2)]), lty = 2, col = 'red');
+  
+  # plot line at 1
+  abline(h = 1, lty = 2);
+  
+  # label each variant
+  text(Pos, variants.VAF.Tunmatched.Total[,y], labels = Variant.label, pos = 2, cex = .5);
+  
+  # title of plot
+  title(main = paste0(Tunmatched.filtered.final[y,1], ' - ', Tunmatched.filtered.final[y,2],' Unmatched MT VAF with Hosts T:', round(mean(somatic.sample[which(!is.na(somatic.sample))]),2), ' H: ', round(median(germline.sample[which(!is.na(germline.sample) & germline.sample>0)]),2)))
+}
+  dev.off()
+
+
+
+
+
+```
+
+#### VAF Plots Post-Filtering: Hosts
+```{r Post-Filtering VAF Plots: Host}
+
+setwd(Outputpath)
+
+# already.checked.hosts<-read.xlsx2("~/Desktop/PCR_WPP/2017-11-05_v12_Haplotype_Sample_Info.xlsx", sheetIndex = 3, stringsasFactors=FALSE) 
+  
+  
+
+already.checked.hosts$ID<-gsub("[[:alpha:]].*", "", already.checked.hosts$Sample.TCG_ID)
+
+  
+Hindex<-gsub("-Devil", "", colnames(variants.VAF.H.filtered));
+
+## Add tumor specific variants if variant is found and if not then look at overall >1 tumor has the variant
+BAFplotsH<- function(y){
+  Pos = as.numeric(as.character(variants.metadata[,2]));
+  VAFs.sample<-variants.VAF.H.filtered[,y];
+  VAFs.sample_tot<-variants.VAF.H.total[,y];
+  
+  ## somatic variants
+  plot(Pos[var.somatic.index], VAFs.sample[var.somatic.index], xlim=c(1, 16627), ylim=c(0,1), xlab='Position in mitochondrial genome', ylab='VAF (allele fraction)', pch = 16, cex = 1.4, col = alpha('#4D52E8', 0.8))
+  
+  # possibly somatic variants
+  par(new=T)
+  plot(Pos[var.poss.somatic.index], VAFs.sample[var.poss.somatic.index], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('blue', 0.5)); 
+  
+  # germline variants
+  par(new=T)
+  var.col<-ifelse(VAFs.sample_tot[var.germline.index]>.2, 'red', 'gray')
+  plot(Pos[var.germline.index], VAFs.sample_tot[var.germline.index], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha(var.col, 0.5)); 
+  
+  # sequence error variants
+  par(new=T)
+  plot(Pos[var.seqerr.index], VAFs.sample[var.seqerr.index], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('black', 0.5));
+  
+  # unknown variants
+  par(new=T)
+  plot(Pos[var.unknown.index], VAFs.sample[var.unknown.index], xlim=c(1, 16627), ylim=c(0,1), xaxt='n', ann=FALSE, yaxt = 'n', xlab = '', ylab = '', pch = 16, cex = 1.4, col = alpha('#FFBF00', 0.5));
+  
+  # VAF (.2) cross contamination line
+  abline(h = .2, lty = 2);
+  
+  # VAF (1) line
+  abline(h = 1, lty = 2);
+  
+  # label every variant
+  text(Pos, VAFs.sample_tot, labels = Variant.label, pos = 2, cex = .5);
+  
+  # Contamination lines using Mean
+    # Somatic
+  somatic.sample<-VAFs.sample[rbind(var.somatic.index, var.poss.somatic.index)]
+  abline(h = mean(somatic.sample[which(!is.na(somatic.sample))]), lty = 2, col = 'blue');
+  
+    # Germline
+  germline.sample<-VAFs.sample[var.germline.index]
+  abline(h = mean(germline.sample[which(!is.na(germline.sample) & germline.sample>=.2)]), lty = 2, col = 'red');
+  
+  # name of each sample
+  title(main = paste0(Hindex[y], ' - ', sample.location[match(Hindex[y], sample.location[,1]), 2], ' matched MT VAF  T: ', round(mean(somatic.sample[which(!is.na(somatic.sample))]), 2), ' H: ', round(mean(germline.sample[which(!is.na(germline.sample) & germline.sample>=.2)]), 2)));
+}
+
+dir.create("Host_VAF")
+setwd(paste0(getwd(), '/Host_VAF'))
+
+pdf(paste0(Sys.Date(), '_Host_MT_VAF_Filtered Plot.pdf'), 7, 5)
+ for (i in 1:length(Hindex)){
+   BAFplotsH(i)
+ }
+dev.off()
+
+```
+
+
+
+------------------------------------------------------------------------------------------------------------
+
+
+### Calculation of Contamination in Samples
+
+#### Tumor/Host Contamination in Samples using VAF 
+Here, we consolidate the information about the contamination for the host and tumors based on the Mitochondrial variants VAF scores. We calculate the average VAF scores of the somatic variants and germline variants. 
+
+```{r Host Contamination: VAF}
+
+setwd(Outputpath)
+dir.create("Contamination_Calc") # Create a directory specifically for Sample Contamination Analyses
+setwd(paste0(getwd(), '/Contamination_Calc'))
+
+
+## Host Contamination Table
+name.Tmatch<-colnames(variants.VAF.Tmatched.filtered)
+name.Tunmatch<-colnames(variants.VAF.Tunmatched.filtered)
+name.Host<-colnames(variants.VAF.H.filtered)
+
+
+
+TumorContline<-function(x){
+  test<-x[var.somatic.index]
+  test1<-x[var.poss.somatic.index]
+  list.mean<-which(!is.na(test))
+  list.mean1<-which(!is.na(test1))
+  mean.index<-rbind(test[list.mean], test1[list.mean1])
+  mean<-mean(mean.index)
+  return(mean)
+}
+
+HostContline.tumor<-function(x){
+  test<-x[var.germline.index]
+  list.mean<-which(!is.na(test)&test>.2)
+  mean<-mean(test[list.mean])
+  return(mean)
+}
+
+
+HostContline<-function(x){
+  test<-x[var.germline.index]
+  list.mean<-which(!is.na(test)&test>.4)
+  mean<-mean(test[list.mean])
+  return(mean)
+}
+# For Unmatched Tumors
+Unmatched.tumor.line<-as.matrix(apply(variants.VAF.Tunmatched.filtered, 2, TumorContline))
+Unmatched.tumor.hostcontline<-as.matrix(apply(variants.VAF.Tunmatched.Total, 2, HostContline.tumor))
+Unmatched.tumor.total<-cbind(Unmatched.tumor.line, Unmatched.tumor.hostcontline, Unmatched.tumor.line + Unmatched.tumor.hostcontline)
+colnames(Unmatched.tumor.total)<-c('VAF.Tapprox', 'VAF.Happrox', 'VAF.Total')
+
+matchedline<-function(x){
+  list.mean<-which(!is.na(x))
+  mean<-mean(x[list.mean])
+  return(mean)
+}
+
+
+variants.VAF.Tmatched.filtered.Hcont = matrix(nrow = nrow(variants.VAF.Tmatched.Total), ncol = ncol(variants.VAF.Tmatched.Total))
+
+for(i in 1: nrow(variants.VAF.Tmatched.Total)){
+  for (x in 1:ncol(variants.VAF.Tmatched.Total)){
+    variants.VAF.Tmatched.filtered.Hcont[i,x] = ifelse(variants.VAF.Tmatched.Total[i,x]>.2,
+                                                       ifelse(variants.VAF.Hmatched.Total[i,x]>.35, variants.VAF.Tmatched.Total[i,x], NA), NA)
+  }
+}
+
+colnames(variants.VAF.Tmatched.filtered.Hcont)<-colnames(variants.VAF.Tmatched.filtered)
+
+
+# remove any variants shared between host and tumor above the .9 line for the Tumor Calculation
+variants.VAF.Tmatched.filtered.removed.host<-matrix(nrow = nrow(variants.VAF.Tmatched.filtered), ncol = ncol(variants.VAF.Tmatched.filtered))
+for (i in 1:nrow(variants.VAF.Tmatched.filtered)){
+  for (x in 1:ncol(variants.VAF.Tmatched.filtered)){
+    variants.VAF.Tmatched.filtered.removed.host[i,x] = ifelse(variants.VAF.Tmatched.Total[i,x]>.2,
+                                                       ifelse(variants.VAF.Hmatched.Total[i,x]>.35, NA, variants.VAF.Tmatched.filtered[i,x]), NA)
+  }
+}
+ 
+colnames(variants.VAF.Tmatched.filtered.removed.host)<-colnames(variants.VAF.Tmatched.filtered)
+ 
+
+# exclude sequence error variants in creating Tumor line and Host lines
+variants.VAF.Tmatched.filtered.Hcont.noseqerr<-variants.VAF.Tmatched.filtered.Hcont[-var.seqerr.index,]
+variants.VAF.Tmatched.filtered.noseqerr<-variants.VAF.Tmatched.filtered.removed.host[-var.seqerr.index, ]
+
+
+# For Matched Tumors: calculation of line is slightly different as it's based on the criteria based on the matched host, rather than across all hosts (i.e. if the variant was found in the host)
+Matched.tumor.line<-as.matrix(apply(variants.VAF.Tmatched.filtered.noseqerr, 2, matchedline))
+Matched.tumor.hostcontline<-as.matrix(apply(variants.VAF.Tmatched.filtered.Hcont.noseqerr, 2, matchedline))
+Matched.tumor.total<-cbind(Matched.tumor.line, Matched.tumor.hostcontline, Matched.tumor.line + Matched.tumor.hostcontline)
+colnames(Matched.tumor.total)<-c('VAF.Tapprox', 'VAF.Happrox', 'VAF.Total')
+
+# For Hosts
+Host.line<-as.matrix(apply(variants.VAF.H.filtered, 2, HostContline))
+Host.tumor.contline<-as.matrix(apply(variants.VAF.H.filtered, 2, TumorContline))
+Host.total<-cbind(Host.line, Host.tumor.contline, Host.line + Host.tumor.contline)
+colnames(Host.total)<-c('VAF.Happrox', 'VAF.Tapprox', 'VAF.Total')
+
+write.xlsx2("Contamination.calculation.xlsx", Matched.tumor.total, Unmatched.tumor.total, Host.total)
+
+```
+
+
+
+------------------------------------------------------------------------------------------------------------
+### Incorporation of the Homdel Analyses (Host Contamination)
+
+#### Import the Contamination calculation generated from the whole genome analysis
+
+```{r Import VAF Contamination and Homdel Contamination Analyses}
+### IMPORTANT THINGS TO FIX:
+# 10133C>T is recurrent
+VAF.cont.tumour<-read.xlsx2('~/Desktop/Maps_Haplogroup_Info/Meeting/Contamination.xlsx',1)
+VAF.cont.host<-read.xlsx2('~/Desktop/Maps_Haplogroup_Info/Meeting/Contamination.xlsx',2)
+
+cont.tumour<-data.frame(lapply(VAF.cont.tumour, function(x) gsub("ERROR", NA, x)), stringsAsFactors=FALSE)
+cont.tumour$VAF.Happrox[which(cont.tumour$VAF.Happrox=="NA")]<-1-as.numeric(as.character(cont.tumour$VAF.Tapprox[which(cont.tumour$VAF.Happrox=="NA")]))
+
+cont.host<-data.frame(lapply(VAF.cont.host, function(x) gsub("ERROR", NA, x)), stringsAsFactors=FALSE)
+cont.host$VAF.Tapprox[which(is.na(cont.host$VAF.Tapprox))]<-1-as.numeric(as.character(cont.host$VAF.Happrox[which(is.na(cont.host$VAF.Tapprox))]))
+
+
+## Importing .csv files into R
+setwd('~/Desktop/Maps_Haplogroup_Info/')
+temp = list.files(getwd(), pattern="*.csv")
+temp.tumor<-temp[grep("Tumor", temp)]
+temp.host<-temp[grep("Host", temp)]
+tumor.cont.final<-matrix(ncol = 5, nrow = 0, dimnames = list(NULL, c("TCG_ID", "Chr2_del_norm", "Avg LOH", "Avg Homdel", "VAF")))
+tumor.CN<-matrix(ncol = 26, nrow = 0, dimnames = list(NULL, c("X","Median.coverage","Med.Chr1","Chr1_coverage","Chr1_cov_norm","Med.Chr1.1", "Chr1_mid_coverage","Chr1_mid_cov_norm", "Med.Chr2","Chr2_coverage","Chr2_cov_norm","Med.Chr3", "Chr3_coverage","Chr3_cov_norm", "Med.Chr2.SC.278", "Mean.Chr2.del","Chr2_del_norm_SC","Chr2_del_norm_chr","Med.Chr3.SC.93.94","Mean.Chr3.del","Chr3_del_norm","Chr3_del_norm_chr", "Avg_LOH"," Avg_Homdel", "Avg_Combined", "Avg_LOH_new" )))
+for(x in 1:length(temp.tumor)){
+  temp.data<-read.csv(temp.tumor[x])
+  TCG_ID<-(gsub("_.*", "", temp.data[,1]))
+  Chr2_del<-temp.data[,17]
+  AVGLOH<-temp.data[,23]
+  AVGHOMDEL<-temp.data[,24]
+  temp.combined<-cbind(TCG_ID, Chr2_del, AVGLOH, AVGHOMDEL)
+  colnames(temp.combined)[1]<-"TCG_ID"
+  temp.final<-merge(cont.tumour, temp.combined, by = "TCG_ID")
+  tumor.cont.final<-rbind(tumor.cont.final, temp.final)
+  tumor.CN<-rbind(tumor.CN, temp.data)
+}
+
+# Importing DFT2 samples
+dft2.tumor.cont<-read.csv('~/Desktop/Maps_Haplogroup_Info/bedtools.cont.DFT2.csv')
+dft2.tumor.cont.final<-dft2.tumor.cont[,c(1,12)]
+dft2.tumor.cont.final[,1]<-gsub("_.*","", dft2.tumor.cont.final[,1])
+tumor.cont.final$AVGLOH<-as.numeric(as.character(tumor.cont.final$AVGLOH))
+for(x in 1:nrow(dft2.tumor.cont.final)){
+  tumor.cont.final[which(tumor.cont.final[,1]==dft2.tumor.cont.final[x,1]),6]<-as.numeric(as.character(dft2.tumor.cont.final[x,2]))
+}
+
+
+host.cont.final<-matrix(ncol = 5, nrow = 0, dimnames = list(NULL, c("TCG_ID", "Chr2_del_norm", "Avg LOH", "Avg Homdel", "VAF")))
+for(x in 1:length(temp.host)){
+  temp.data<-read.csv(temp.host[x])
+  TCG_ID<-(gsub("_.*", "", temp.data[,1]))
+  Chr2_del<-temp.data[,17]
+  AVGLOH<-temp.data[,23]
+  AVGHOMDEL<-temp.data[,24]
+  temp.combined<-cbind(TCG_ID, Chr2_del, AVGLOH, AVGHOMDEL)
+  colnames(temp.combined)[1]<-"TCG_ID"
+  temp.final<-merge(cont.host, temp.combined, by = "TCG_ID")
+  host.cont.final<-rbind(host.cont.final, temp.final)
+}
+
+# Add AVGLOH updated
+tumor.cont.final$AVGLOH.new<-tumor.cont.final$AVGLOH*2
+tumor.cont.final<-tumor.cont.final[-which(is.na(tumor.cont.final$AVGLOH)),]
+
+
+host.cont.final$AVGLOH.new<-as.numeric(as.character(host.cont.final$AVGLOH))*2
+
+
+host.cont.final1<-host.cont.final
+host.cont.final1$TCG_ID<-gsub("-Devil", "", host.cont.final1$TCG_ID)
+host.cont.final.CVB<-host.cont.final1
+host.cont.final.CVB$TCG_ID<-factor(host.cont.final.CVB$TCG_ID, levels =host.cont.final.CVB$TCG_ID[order(as.numeric(as.character(host.cont.final.CVB$Chr2_del)))])
+
+host.cont.final.VAF<-host.cont.final1
+host.cont.final.VAF$TCG_ID<-factor(host.cont.final.VAF$TCG_ID, levels = host.cont.final.VAF$TCG_ID[order(host.cont.final.VAF[,2])])
+
+host.cont.final.CVB1<-host.cont.final1
+host.cont.final.CVB1$TCG_ID<-factor(host.cont.final.CVB1$TCG_ID, levels =host.cont.final.CVB1$TCG_ID[order(as.numeric(as.character(host.cont.final.CVB1$AVGHOMDEL)))])
+
+
+
+
+hostcalcCVB<-ggplot(host.cont.final.CVB)+
+  #geom_point(aes(TCG_ID, as.numeric(as.character(VAF.Happrox))), color = "blue")+
+  geom_point(aes(TCG_ID, as.numeric(as.character(Chr2_del))), color = "red")+theme_bw()+ylim(0, 1.5)+
+  theme(axis.text.x = element_text(angle = 90, size = 7))+labs(y = "Proportion of Host", title = "Coverage Bin Host Approximation Calculation")+geom_hline(yintercept = 1)+geom_hline(yintercept = .5)
+
+hostcalcVAF<-ggplot(host.cont.final.VAF)+geom_point(aes(TCG_ID, as.numeric(as.character(VAF.Happrox))), color = "blue")+geom_point(aes(TCG_ID, as.numeric(as.character(Chr2_del))), color = "red")+theme_bw()+ylim(0.5, 1.5)+theme(axis.text.x = element_text(angle = 90, size = 7))+labs(y = "Proportion of Host", title = "VAF Host Approximation Calculation")+geom_hline(yintercept = 1)
+
+hostcalcCVB1<-ggplot(host.cont.final.CVB1)+
+  #geom_point(aes(TCG_ID, as.numeric(as.character(VAF.Happrox))), color = "blue")+
+  geom_point(aes(TCG_ID, as.numeric(as.character(AVGHOMDEL))), color = "red")+theme_bw()+ylim(0.5, 1.5)+theme(axis.text.x = element_text(angle = 90, size = 7))+labs(y = "Proportion of Host", title = "VAF Host Approximation Calculation")+geom_hline(yintercept = 1)
+
+
+
+pdf("~/Desktop/Maps_Haplogroup_Info/Contamination.pdf", 50, 45)
+grid.arrange(hostcalcCVB, hostcalcVAF, hostcalcCVB1, ncol = 1)
+dev.off()
+pdf("~/Desktop/Maps_Haplogroup_Info/Contamination_1.pdf", 40, 10)
+hostcalcCVB
+dev.off()
+
+
+# Correlation between AVG LOH and Homdel
+
+pdf("~/Desktop/Maps_Haplogroup_Info/Correlation_revised_AVGLOH_Homdel.pdf", 12, 12)
+par(mfrow = c(2,2))
+test1<-lm(tumor.cont.final$AVGLOH.new~as.numeric(as.character(tumor.cont.final$AVGHOMDEL)))
+plot(as.numeric(as.character(tumor.cont.final$AVGHOMDEL)), tumor.cont.final$AVGLOH.new, xlim=c(0,1.4), ylim = c(0,1.4), xlab = "Homdel depth fraction", ylab = "LOH depth fraction")
+title(main = "Homdel versus LOH Method for Depth Analyses")
+abline(test1, cex = 5, col = "red")
+abline(h = 1, v = 1, col = "gray", pch = 2)
+lm_coef <- round(coef(test1), 3) 
+Rsquared<-round(summary(test1)$r.squared, 3)
+mtext(bquote(y == .(lm_coef[2])*x + .(lm_coef[1])* "," ~~   r^2 == .(Rsquared)), 
+adj=1, padj=0)
+
+test<-lm(tumor.cont.final$AVGLOH.new~as.numeric(as.character(tumor.cont.final$VAF.Happrox)))
+plot(as.numeric(as.character(tumor.cont.final$VAF.Happrox)), tumor.cont.final$AVGLOH.new, xlab = "VAF Host Contamination", ylab = "LOH depth fraction", xlim=c(0,1.4), ylim=c(0,1.4))
+title(main = "VAF versus LOH Comparison Analyses")
+abline(test, cex = 5, col = "red")
+abline(h = 1, v = 1, col = "gray", pch = 2)
+lm_coef <- round(coef(test), 3) 
+Rsquared<-round(summary(test)$r.squared, 3)
+mtext(bquote(y == .(lm_coef[2])*x + .(lm_coef[1])* "," ~~   r^2 == .(Rsquared)), 
+adj=1, padj=0) # display equation 
+
+test2<-lm(as.numeric(as.character(tumor.cont.final$AVGHOMDEL))~as.numeric(as.character(tumor.cont.final$VAF.Happrox)))
+plot(as.numeric(as.character(tumor.cont.final$VAF.Happrox)), as.numeric(as.character(tumor.cont.final$AVGHOMDEL)), xlab = "VAF Host Contamination", ylab = "Homdel depth fraction", xlim=c(0,1.4), ylim=c(0,1.4))
+title(main = "VAF versus Homdel Comparison Analyses")
+abline(test2, cex = 5, col = "red")
+abline(h = 1, v = 1, col = "gray", pch = 2)
+lm_coef <- round(coef(test2), 3) 
+Rsquared<-round(summary(test2)$r.squared, 3)
+mtext(bquote(y == .(lm_coef[2])*x + .(lm_coef[1])* "," ~~   r^2 == .(Rsquared)), 
+adj=1, padj=0)
+dev.off()
+
+
+```
+
+
+### Quick correlation analysis to assess accuracy of contamination calculation using MT VAFs and WGS CNVs
+
+```{r}
+cor.test.T<-as.data.frame(cbind(tumor.cont.final[,c(1,3,7,8)]))
+cor.test.H<-as.data.frame(cbind(host.cont.final[,c(1,2,6)], as.numeric(as.character(host.cont.final$AVGLOH.new))))
+colnames(cor.test.H)<-colnames(cor.test.T)
+cor.test.H$Chr2_LOH<-(as.numeric(as.character(cor.test.H$Chr2_del)) +(1-as.numeric(cor.test.H$AVGLOH)))/2
+cor.test.H<-cor.test.H[-which(is.na(cor.test.H$VAF.Happrox)),]
+
+# test between VAF and LOH and Homdel
+testT<-lm(as.numeric(cor.test.T$VAF.Happrox)~as.numeric(as.character(cor.test.T$AVGLOH)))
+summary(testT)
+
+
+#pdf("prefiltered.plot.Tumor.Hcont.pdf", 10, 10)
+plot(as.numeric(as.character(cor.test.T$AVGLOH)), as.numeric(cor.test.T$VAF.Happrox), xlim = c(0,1), ylim = c(0,1), xlab = "Docplot Avg of LOH", ylab = "VAF for Host contamination")
+par(new = T)
+text(as.numeric(as.character(cor.test.T$AVGLOH)), as.numeric(cor.test.T$VAF.Happrox), label = cor.test.T$TCG_ID, pos = 2, cex = .3)
+title(main = "VAF scores vs Docplot for Tumors")
+abline(testT)
+dev.off()
+
+#pdf("diagnostic.regression.Tumor.Hcont.pdf", 8, 8)
+layout(matrix(c(1,2,3,4),2,2))
+plot(testT)
+dev.off()
+
+
+
+## Importing the Mitochondria Sample Database
+
+Sample.info.tumor<-read.xlsx2('~/Desktop/2016-04_09-v5_Final_Sample_Summary_PCR_Seq.xlsx',1)[-1,]
+Tumor.list<-c(as.character(Sample.info.tumor[,9]), as.character(Sample.info.tumor[,17]))
+Tumor.list<-Tumor.list[-which(Tumor.list=="")]
+Tumor.list<-as.data.frame(Tumor.list)
+colnames(Tumor.list)<-"TCG_ID"
+cor.test.T$TCG_ID<-gsub("-Devil", "", cor.test.T$TCG_ID)
+
+Filtered<-merge(cor.test.T, Tumor.list, by = 'TCG_ID')
+
+testT.filtered<-lm(as.numeric(Filtered$VAF.Happrox)~as.numeric(as.character(Filtered$AVGLOH)))
+summary(testT.filtered)
+
+
+
+#pdf("Filtered.plot.Tumor.Hcont.pdf", 10, 10)
+plot(as.numeric(as.character(Filtered$AVGLOH)), as.numeric(Filtered$VAF.Happrox), xlim = c(0,1), ylim = c(0,1), xlab = "Docplot Avg of LOH", ylab = "VAF for Host contamination")
+par(new = T)
+text(as.numeric(as.character(Filtered$AVGLOH)), as.numeric(Filtered$VAF.Happrox), label = cor.test.T$TCG_ID, pos = 2, cex = .3)
+title(main = "VAF scores vs Docplot for Tumors")
+abline(testT.filtered)
+dev.off()
+
+#pdf("Filtered.diagnostic.regression.Tumor.Hcont.pdf", 8, 8)
+layout(matrix(c(1,2,3,4),2,2))
+plot(testT.filtered)
+dev.off()
+
+## Bland Altman Graph of All
+diff<-as.numeric(as.character(cor.test.T$AVGLOH)) - as.numeric(cor.test.T$VAF.Happrox)
+diff<-diff[-which(is.na(diff))]
+
+upper<-mean(diff)+1.96*sd(diff)
+lower<-mean(diff)-1.96*sd(diff)
+
+#pdf("prefiltered.BlandAltman.pdf", 10, 10)
+plot(as.numeric(as.character(cor.test.T$AVGLOH)) - as.numeric(cor.test.T$VAF.Happrox),
+     as.numeric(as.character(cor.test.T$AVGLOH))+as.numeric(cor.test.T$VAF.Happrox)/2, 
+     xlab = "AVG of Both methods", ylab = "Difference of Both methods")
+par(new = T)
+text(as.numeric(as.character(cor.test.T$AVGLOH)) - as.numeric(cor.test.T$VAF.Happrox), 
+     as.numeric(as.character(cor.test.T$AVGLOH))+as.numeric(cor.test.T$VAF.Happrox)/2,
+     label = cor.test.T$TCG_ID, pos = 2, cex = .4)
+title(main = "Bland-Altman Plot: VAF vs LOH")
+abline(h = c(upper, lower), lty = 2)
+dev.off()
+
+
+## Split into Two Groups
+cor.test.below.5<-cor.test.T[which(cor.test.T$VAF.Happrox<.5),]
+cor.5.loh<-lm(as.numeric(cor.test.below.5$VAF.Happrox)~as.numeric(as.character(cor.test.below.5$AVGLOH)))
+cor.5.hom<-lm(as.numeric(cor.test.below.5$VAF.Happrox)~as.numeric(as.character(cor.test.below.5$Chr2_del)))
+
+plot(as.numeric(as.character(cor.test.below.5$Chr2_del)),as.numeric(cor.test.below.5$VAF.Happrox),xlim=c(0,1),ylim=c(0,1))
+abline(cor.5.hom)
+
+plot(as.numeric(cor.test.below.5$VAF.Happrox),as.numeric(as.character(cor.test.below.5$AVGLOH)), xlim=c(0,1),ylim=c(0,1))
+abline(cor.5.loh)
+
+
+
+cor.test.above.5<-cor.test.T[which(cor.test.T$VAF.Happrox>=.5),]
+cor.5.above.loh<-lm(as.numeric(cor.test.above.5$VAF.Happrox)~as.numeric(as.character(cor.test.above.5$AVGLOH)))
+cor.5.above.hom<-lm(as.numeric(cor.test.above.5$VAF.Happrox)~as.numeric(as.character(cor.test.above.5$Chr2_del)))
+
+plot(as.numeric(cor.test.above.5$VAF.Happrox),as.numeric(as.character(cor.test.above.5$Chr2_del)), xlim=c(0,1),ylim=c(0,1))
+abline(cor.5.above.hom)
+plot(as.numeric(cor.test.above.5$VAF.Happrox),as.numeric(as.character(cor.test.above.5$AVGLOH)), xlim=c(0,1),ylim=c(0,1))
+```
+
+
+
+### Calcuation of Mitochondrial Copy Number analysis for Tumors.
+
+Here we look at estimates of mitochondrial copy number in tumors, taking into account the amount of host contamination, and ploidy levels of the tumors. We normalize the tumor mitochondrial copy number to the mitochondrial copy number observed in biopsies that are stromal (host tissue surrounding the tumor) which we classified as samples where we did not observe any somatic mitochondrial variants (variants observed in DFT1 tumors that were previously validated by PCR) and the whole genome copy numbers specific to the tumors.
+
+```{r Copy Number Analyses}
+## COPY NUMBER ANALYSES
+## Separate the Tumors to those below .4 and above .4 in terms of average LOH
+# Tissue Type Analyses
+Tissue.tumors<-read.xlsx2('~/Desktop/2016-04_09-v5_Final_Sample_Summary_PCR_Seq.xlsx',1)[-1,]
+Tissue.hosts<-read.xlsx2('~/Desktop/2016-04_09-v5_Final_Sample_Summary_PCR_Seq.xlsx',2)[-1,]
+
+# Ploidy
+Diploid<-as.character(Tissue.tumors$Diploid.DFT1)
+Tetraploid<-as.character(Tissue.tumors$Tetraploid.DFT1)
+Unknown.ploidy<-c(as.character(Tissue.tumors$Unknown.Ploidy.DFT1),as.character(Tissue.tumors$Unknown.Ploidy.DFT2))
+
+Polyploid<-as.character(Tissue.tumors$Polyploid.DFT1)
+
+Ploidy<-melt(cbind(Diploid, Tetraploid, Unknown.ploidy, Polyploid))[,-1]
+colnames(Ploidy)<-c('Ploidy', 'TCG_ID')
+Ploidy<-Ploidy[-which(Ploidy$TCG_ID ==""),]
+
+# Primary vs Metastases Lists
+Primary<-as.character(Tissue.tumors$Primary.DFT1.DFT2)
+Metastases<-as.character(Tissue.tumors$Metastases.DFT1.DFT2)
+
+Prim.met<-melt(cbind(Primary,Metastases))[,-1]
+colnames(Prim.met)<-c('Prim.met', 'TCG_ID')
+Prim.met<-Prim.met[-which(Prim.met$TCG_ID==""),]
+
+
+# Tissue Types (Hosts)
+Tissue.type.hosts<-cbind(as.character(Tissue.hosts$Hosts.excluding.those.discarded.), as.character(Tissue.hosts$Tissue.Type))
+colnames(Tissue.type.hosts)<-c("TCG_ID", "Type")
+Tissue.type.hosts<-Tissue.type.hosts[-which(Tissue.type.hosts[,1]==""),]
+
+Tissue.type.hosts[,1]<-gsub("H.*", "", Tissue.type.hosts[,1])
+
+# Haplotype Information (Tumors)
+Haplotype.tumors<-read.xlsx2('~/Desktop/Maps_Haplogroup_Info/Meeting/Haplotype_Spread/2016-04-09_v8_Haplotype_Sample_Info.xlsx',1)[,1:9]
+Haplotype.tumors1<-read.xlsx2('~/Desktop/Maps_Haplogroup_Info/Meeting/Haplotype_Spread/2016-04-09_v8_Haplotype_Sample_Info.xlsx',2)[,1:9]
+Haplotype.tumors<-rbind(Haplotype.tumors, Haplotype.tumors1)
+colnames(Haplotype.tumors)[1]<-'TCG_ID'
+
+
+# Haplotype Information (Hosts)
+Haplotype.hosts<-read.xlsx2('~/Desktop/Maps_Haplogroup_Info/Meeting/Haplotype_Spread/2016-26-09_v9_Haplotype_Sample_Info.xlsx', 3)
+colnames(Haplotype.hosts)[1]<-'TCG_ID'
+Haplotype.hosts[,1]<-gsub("H.*", "", Haplotype.hosts[,1])
+
+
+# Consolidation of Contamination Calculation
+#Filtered$CN<-NA
+#for(x in 1:nrow(Filtered)){
+ # if(as.numeric(as.character(Filtered$AVGLOH[x]))>=.47){
+  #  Filtered$CN[x]<-as.numeric(as.character(Filtered$Chr2_del[x]))
+  #}
+  #else{
+  #  Filtered$CN[x]<-as.numeric(as.character(Filtered$AVGLOH[x]))
+  #}
+#}
+
+# Unfiltered
+cor.test.T<-cor.test.T[-166,]
+cor.test.T$CN<-NA
+for(x in 1:nrow(cor.test.T)){
+  if(as.numeric(as.character(cor.test.T$AVGLOH[x]))>=.47){
+    cor.test.T$CN[x]<-as.numeric(as.character(cor.test.T$Chr2_del[x]))
+  }
+  else{
+    cor.test.T$CN[x]<-as.numeric(as.character(cor.test.T$AVGLOH[x]))
+  }
+}
+
+cor.test.T$TCG_ID<-factor(cor.test.T$TCG_ID, levels = cor.test.T$TCG_ID[order(as.numeric(as.character(cor.test.T$AVGLOH.new)))])
+
+#pdf("~/Desktop/Maps_Haplogroup_Info/Tumor.contamination.pdf", 25,10)
+ggplot(cor.test.T)+
+  geom_point(aes(TCG_ID, as.numeric(as.character(VAF.Happrox))), color = "blue")+
+  geom_point(aes(TCG_ID, as.numeric(as.character(CN))), color = "red")+theme_bw()+ylim(0, 1)+theme(axis.text.x = element_text(angle = 90, size = 7))+labs(y = "Proportion of Host Contamination", title = "VAF vs CN Calculation Comparison")+geom_hline(yintercept = 1)
+dev.off()
+
+
+
+#pdf("Filtered.CN.VAF.tumor.unfiltered.pdf", 10, 10)
+CovvsVAF<-lm(as.numeric(as.character(cor.test.T$VAF.Happrox))~cor.test.T$CN)
+summary(CovvsVAF)
+plot(cor.test.T$CN, as.numeric(as.character(cor.test.T$VAF.Happrox)), xlim = c(0,1), ylim = c(0,1), xlab = 'CN', ylab = 'VAF')
+abline(CovvsVAF)
+text(cor.test.T$CN, as.numeric(as.character(cor.test.T$VAF.Happrox)), label = cor.test.T$TCG_ID, pos = 2, cex = .7)
+dev.off()
+
+#pdf("Filtered.CN.VAF.tumor.revised.pdf", 10, 10)
+Correlation<-lm(as.numeric(as.character(Filtered$VAF.Happrox))~Filtered$CN)
+plot(Filtered$CN, as.numeric(as.character(Filtered$VAF.Happrox)), xlim = c(0,1), ylim = c(0,1), xlab = 'CN', ylab = 'VAF')
+abline(Correlation)
+text(Filtered$CN, as.numeric(as.character(Filtered$VAF.Happrox)), label = Filtered$TCG_ID, pos = 2, cex = .7)
+dev.off()
+
+
+# Import Mitochondrial Coverage
+mit.cov<-read.csv('~/Desktop/Final.MT.cov.csv', header = FALSE, stringsAsFactors = FALSE)[,-1]
+#mit.cov[1,]<-gsub("(Devil).*", "\\1", mit.cov[1,])
+#mit.cov[1,]<-gsub("[.]", "-", mit.cov[1,])
+#mit.cov[1,]<-gsub("X", "", mit.cov[1,])
+mit.cov[1,]<-gsub("-Devil.*", "\\1", mit.cov[1,])
+rownames(mit.cov)<-c('TCG_ID', 'Median.MT', 'Mean.MT')
+mit.cov<-t(mit.cov)
+
+# merge with Mit Cov
+tumor.combined<-merge(Filtered, mit.cov, by = 'TCG_ID')
+
+host.mit<-mit.cov[grepl("H", mit.cov[,1]),]
+host.mit[,1]<-gsub("H.*", "", host.mit[,1])
+host.combined<-merge(Tissue.type.hosts, host.mit, by = 'TCG_ID')
+host.combined<-merge(host.combined, Haplotype.hosts, by = 'TCG_ID')
+
+
+
+# Import Nuclear Coverage
+wg.cov<-read.csv('~/Desktop/Final.WG.cov.csv', header = FALSE, stringsAsFactors = FALSE)[,-1]
+wg.cov[1,]<-gsub("-Devil.*", "\\1", wg.cov[1,])
+wg.cov[7,]<-as.numeric(as.character(wg.cov[4,]))*125/10000
+rownames(wg.cov)<-c('TCG_ID', 'Median.WG', 'Mean.WG', 'Median.no.reads', 'Median.bases.covered', 'Median.frac.covered', 'Median.WG.calc')
+wg.cov<-t(wg.cov)
+host.wg.cov<-wg.cov[grepl("H", wg.cov[,1]),]
+host.wg.cov[,1]<-gsub("H.*", "", host.wg.cov[,1])
+
+tumor.combined.final<-merge(tumor.combined, wg.cov, by = 'TCG_ID')
+tumor.combined.final<-tumor.combined.final[-(which(duplicated(tumor.combined.final$TCG_ID))-1), ]
+
+host.combined.final<-merge(host.combined, host.wg.cov, by = 'TCG_ID')
+host.combined.final[,1]<-paste0(host.combined.final[,1], "H")
+
+# merge with Haplotype info
+tumor.combined.final<-merge(tumor.combined.final, Haplotype.tumors[, c(1,3,4,6)])
+
+# merge with Primary/Metastases Info
+tumor.combined.final<-merge(tumor.combined.final, Prim.met)
+
+# merge with Ploidy Info
+tumor.combined.final$Ploidy<-Ploidy[match(tumor.combined.final$TCG_ID, Ploidy$TCG_ID),1]
+  # Polyploid
+  tumor.combined.final$Ploidy[which(tumor.combined.final$Ploidy=='Polyploid')]<-'Tetraploid'
+
+
+# Stromal Cells Coverage Bin
+# Highly Host-Contaminated Tumors 
+stromal<-Sample.info.tumor[,25:26]
+colnames(stromal)[1]<-'TCG_ID'
+stromal<-merge(stromal, wg.cov, by = 'TCG_ID')
+stromal<-merge(stromal, mit.cov, by = 'TCG_ID')
+stromal$PCR.diagnoses.of.Tumour[which(stromal$TCG_ID == '177T1')]<-'DFT1 marker observed'
+
+stromal.no.marker<-stromal[which(stromal$PCR.diagnoses.of.Tumour=='No DFTD markers observed'),]
+stromal.marker<-stromal[-which(stromal$PCR.diagnoses.of.Tumour=='No DFTD markers observed'| stromal$PCR.diagnoses.of.Tumour == ""),]
+
+stromal$TCG_ID<-factor(stromal$TCG_ID, levels = stromal$TCG_ID[order(as.numeric(as.character(stromal$Median.MT)))])
+
+
+# View variance of the number of copies from stromal cells
+library(gridExtra)
+library(ggplot2)
+#pdf("stromal.distribution.MT.WG.pdf", 16, 18)
+plot1<-ggplot(stromal, aes(x = TCG_ID, y = as.numeric(as.character(stromal$Median.MT)), colour = PCR.diagnoses.of.Tumour))+geom_point(size = 4)+labs(y = "Average No. of MT (Median)", title = "Highly host-contaminated Tumors: MT Coverage")+theme_bw()+theme(axis.text.x = element_text(angle=90))+theme(panel.border = element_blank(), panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 13))
+
+plot2<-ggplot(stromal, aes(x = TCG_ID, y = as.numeric(as.character(stromal$Median.WG.calc)), colour = PCR.diagnoses.of.Tumour))+geom_point(size = 4)+labs(y = "Average No. of WG (Median)", title = "Highly host-contaminated Tumors: WG Coverage")+theme_bw()+theme(axis.text.x = element_text(angle=90))+ylim(0,5)+theme(panel.border = element_blank(), panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank())
+
+grid.arrange(plot1, plot2, ncol = 1)
+
+dev.off()
+
+
+# Copy Number Analyses
+
+tumor.combined.final$PloidyNo<-NA
+
+tumor.combined.final$Ploidy<-as.character(tumor.combined.final$Ploidy)
+tumor.combined.final$VAF.Happrox<-as.numeric(as.character(tumor.combined.final$VAF.Happrox))
+tumor.combined.final$Median.MT<-as.numeric(as.character(tumor.combined.final$Median.MT))
+tumor.combined.final$Median.WG<-as.numeric(as.character(tumor.combined.final$Median.WG))
+tumor.combined.final$Median.WG.calc<-as.numeric(as.character(tumor.combined.final$Median.WG.calc))
+
+tumor.combined.final$MT.CN<-(1-tumor.combined.final$VAF.Happrox)*tumor.combined.final$Median.MT
+tumor.combined.final$WG.CN<-(1-tumor.combined.final$AVGLOH.new)*tumor.combined.final$Median.WG
+
+
+for(x in 1:nrow(tumor.combined.final)){
+  sample = tumor.combined.final$Ploidy[x] # Ploidy Count
+if((sample == "Unknown.ploidy")==TRUE){
+  tumor.combined.final$PloidyNo[x]<-2
+}
+if((sample == "Tetraploid")==TRUE){
+  tumor.combined.final$PloidyNo[x]<-4
+}
+if((sample == "Diploid")==TRUE){
+  tumor.combined.final$PloidyNo[x]<-2
+}
+if((sample == "Polyploid")==TRUE){
+  tumor.combined.final$PloidyNo[x]<-4
+}
+}
+
+tumor.combined.final$MTCN.VAF_LOH_Ploidy<- (tumor.combined.final$MT.CN/tumor.combined.final$WG.CN)*tumor.combined.final$PloidyNo
+tumor.combined.final$Left_VAFCN<-tumor.combined.final$RawCN_ploidy-tumor.combined.final$MTCN.VAF_LOH_Ploidy
+```
+
+
+# MT Copy Number Calculation for Hosts
+We calculate the MT copy number  across  the different host tissue types to assess and compare this to the MT copy number in stromal tissues to see whether stromal tissues show differential counts of mitochondria. 
+```{r Copy Number Analysis in Hosts}
+host.combined.final$MTCN<-as.character(host.combined.final$MTCN)
+host.combined.final$MTCN<-as.numeric(as.character(host.combined.final$Median.MT))/as.numeric(as.character(host.combined.final$Median.WG))*2
+
+host.combined.final$Type<-as.character(host.combined.final$Type)
+host.combined.final$Type[grepl("Biopsy", host.combined.final$Type)]<-"Ear biopsy"
+host.combined.final$Type[which(host.combined.final$Type=="")]<-"Ear biopsy"
+host.combined.final$Type[which(host.combined.final$Type=="Liver spleen")]<-"Liver"
+host.combined.final$Type[which(host.combined.final$Type=="spleen")]<-"Spleen"
+host.combined.final$Type[is.na(host.combined.final$Type)]<-"Fibroblast"
+
+
+tiss.host<-host.combined.final[,c(1,2,19)]
+tiss.tumor<-cbind(tumor.combined.final[,c(1,19)], "Tumor")
+colnames(tiss.tumor)<-c("TCG_ID", "MTCN", "Type")
+tissue.final.combined<-rbind(tiss.host, tiss.tumor)
+subset.tissue<-tissue.final.combined[which(tissue.final.combined$Type == "Ear biopsy"|tissue.final.combined$Type == "Liver"|tissue.final.combined$Type == "Spleen"|tissue.final.combined$Type == "Tumor"),]
+
+
+tissue.combined<-ggplot(tissue.final.combined, aes(Type, MTCN))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .4, alpha = .5, size=2)+theme_bw()+labs(x ="", y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number vs Tissue Type")+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.background = element_blank(),axis.text = element_text(size = 13))
+
+tissue.specific<-ggplot(subset.tissue, aes(Type, MTCN))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .4, alpha = .5, size=2)+theme_bw()+labs(x ="", y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number vs Tissue Type")+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.background = element_blank(),axis.text = element_text(size = 13))
+
+hist.combined<-ggplot()+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Ear biopsy"),], aes(x = MTCN), fill = "red", alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Spleen"),], aes(x = MTCN), fill = "blue",alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Liver"),], aes(x = MTCN), fill = "green",alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Tumor"),], aes(x = MTCN), fill = "orange",alpha = .5, color = "black", binwidth = 50)+labs(x = "Mitochondrial Copy Number", y = "Frequency", title = "Mitochondrial Copy Number vs Tissue: Liver (Green), Spleen (Purple), Ear (Pink) and Tumor (Orange)")+theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.background = element_blank(),axis.text = element_text(size = 13))
+
+hist.tissue<-ggplot()+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Ear biopsy"),], aes(x = MTCN), fill = "red", alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Spleen"),], aes(x = MTCN), fill = "blue",alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Liver"),], aes(x = MTCN), fill = "green",alpha = .5, color = "black", binwidth = 50)+labs(x = "Mitochondrial Copy Number", y = "Frequency", title = "Mitochondrial Copy Number vs Tissue: Spleen(Purple), Liver(Green), Ear (Pink)")+theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.background = element_blank(),axis.text = element_text(size = 13))
+
+hist.tumor<-ggplot()+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Ear biopsy"),], aes(x = MTCN), fill = "red", alpha = .5, color = "black", binwidth = 50)+geom_histogram(data = subset.tissue[which(subset.tissue$Type=="Tumor"),], aes(x = MTCN), fill = "orange",alpha = .5, color = "black", binwidth = 50)+labs(x = "Mitochondrial Copy Number", y = "Frequency", title = "Mitochondrial Copy Number vs Ear biopsy (pink) and Tumor (yellow)")+theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), legend.background = element_blank(),axis.text = element_text(size = 13))
+
+
+# Tissue Type Analyses
+#pdf("Tissue.combined.pdf", 25,15)
+grid.arrange(tissue.combined, arrangeGrob(tissue.specific, hist.tumor, hist.tissue, ncol = 3), hist.combined, ncol = 1) 
+dev.off()
+
+
+
+# Copy Number based on Stromal
+tumor.combined.final$CN.stromal<-NA
+
+# Calculate the number of MT copies (median) based on the stromal set (essentially use the copy number)
+stromal$CN<-as.numeric(as.character(stromal$Median.MT))/as.numeric(as.character(stromal$Median.WG.calc))*2
+# remove 55T3 spleen (outlier)
+stromal.new<-stromal[-which(stromal$TCG_ID == '55T3'),]
+
+stromal.no.marker<-stromal.new[which(stromal.new$PCR.diagnoses.of.Tumour=='No DFTD markers observed'),]
+stromal.marker<-stromal.new[-which(stromal.new$PCR.diagnoses.of.Tumour=='No DFTD markers observed'| stromal.new$PCR.diagnoses.of.Tumour == ""),]
+
+med.stromal.no.marker<-median(as.numeric(as.character(stromal.no.marker$CN)))
+med.stromal.marker<-median(as.numeric(as.character(stromal.marker$CN)))
+med.stromal<-median(as.numeric(as.character(stromal.new$CN)))
+
+# Calculation of Copy Number using Stromal Cells
+tumor.combined.final$RawCN<-tumor.combined.final$Median.MT/tumor.combined.final$Median.WG.calc
+tumor.combined.final$RawCN_ploidy<-tumor.combined.final$RawCN*tumor.combined.final$PloidyNo
+tumor.combined.final$CN.stromal<-tumor.combined.final$RawCN_ploidy-((med.stromal.no.marker*(tumor.combined.final$AVGLOH.new))/(1-tumor.combined.final$AVGLOH.new))
+tumor.combined.final$CN.stromal.tot<-tumor.combined.final$CN.tot-(med.stromal*(tumor.combined.final$CN))/(1-tumor.combined.final$CN)
+
+
+# Comparison
+tumor.combined.final.subset<-tumor.combined.final[,c(1,18,19,20,22,23)]
+tumor.combined.final.subset<-melt(tumor.combined.final.subset, id = c("TCG_ID", "Ploidy"))
+colnames(tumor.combined.final.subset)<-c("TCG_ID", "Ploidy", "Method", "CN")
+tumor.combined.final.subset$Method<-factor(tumor.combined.final.subset$Method, levels = c("MTCN.CN", "MTCN.VAF", "CN.stromal", "CN.tot"))
+check_outlier <- function(v, coef=1.5){
+  quantiles <- quantile(v,probs=c(0.25,0.75))
+  IQR <- quantiles[2]-quantiles[1]
+  res <- v < (quantiles[1]-coef*IQR)|v > (quantiles[2]+coef*IQR)
+  return(res)
+}
+
+#pdf("Mitochondrial_CN_Calc_Methods.pdf", 10,6)
+ggplot(tumor.combined.final.subset,aes(Method, CN, fill = Ploidy))+geom_violin(alpha = .3, position = position_dodge(.7))+geom_boxplot(position = position_dodge(.7), width = .3)+scale_x_discrete(labels = c("Coverage Bin Calc Normalized", "VAF Calc Normalized", "Stromal Contam Normalized", "No Contam Accounted"))+labs(x = "", y = "Number of Mitochondrial Copies", title = "Comparison Across Mitochondrial Copy Number Calculations")+theme_bw()+theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank())
+dev.off()
+
+
+#pdf("Mitochondrial_CN_Prim.met.Ploidy.pdf", 16,8)
+plot1<-ggplot(tumor.combined.final, aes(Prim.met, MTCN.CN, fill = Ploidy))+geom_boxplot(alpha= .8)+geom_jitter(alpha = .6,size = 4, position = position_jitterdodge(.2))+ylim(0,800)+theme_bw()+labs(x = "", y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number vs Primary/Metastases")+theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(),axis.text = element_text(size = 14))
+
+plot2<-ggplot(tumor.combined.final, aes(Ploidy, CN.noploid, color = Prim.met))+geom_boxplot(fill = c("#EE878E", "#4ECF5A", "#4E96CF"))+geom_jitter(color = "black", alpha = .6, size = 4, position = position_jitterdodge(.2))+ylim(0,800)+theme_bw()+labs(x = "", y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number vs Ploidy (All Ploidy are the same) ")+theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 14))
+grid.arrange(plot1, plot2, ncol = 2)
+dev.off()
+
+```
+
+
+### Compare Mt Copy Number across Cell-lines carrying ploidy information
+Assess the Mt Copy number across different ploidy states in the tumors.
+
+```{r Tumor Ploidy Levels}
+Cell.lines.list<-c(as.character(Sample.info.tumor[,31]), as.character(Sample.info.tumor[,32]))
+Cell.lines.list<-Cell.lines.list[-which(Cell.lines.list=="")]
+Cell.lines.list<-as.data.frame(Cell.lines.list)
+colnames(Cell.lines.list)<-"TCG_ID"
+Cell.Ploidy<-merge(Cell.lines.list, tumor.combined.final, by = "TCG_ID")
+
+Cell.Diploid<-Cell.Ploidy[which(Cell.Ploidy$Ploidy == "Diploid"),]
+  
+Cell.Tetraploid<-Cell.Ploidy[which(Cell.Ploidy$Ploidy == "Tetraploid"),]
+
+No.cell.lines<-tumor.combined.final[which(tumor.combined.final),]
+
+tumor.combined.final$Cell.line<-"NA"
+tumor.combined.final$Cell.line[match(Cell.Ploidy$TCG_ID, tumor.combined.final$TCG_ID)]<-"Cell Line"
+tumor.combined.final$Cell.line[-match(Cell.Ploidy$TCG_ID, tumor.combined.final$TCG_ID)]<-"Not Cell Line"
+
+
+plot1<-ggplot(Cell.Ploidy[which(Cell.Ploidy$Ploidy=="Diploid"|Cell.Ploidy$Ploidy=="Tetraploid"),], aes(Ploidy, CN.noploid, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .2, size = 3)+theme_bw()+theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 14))+labs(x="", y = "MT Copy Number", title = "Mt CN and Ploidy (assumed that all ploidy are *2): Cell Lines")
+
+plot2<-ggplot(tumor.combined.final[-which(tumor.combined.final$Ploidy=="Unknown.ploidy"),], aes(Ploidy, CN.noploid, fill = Cell.line, color = Cell.line))+
+        geom_boxplot(outlier.colour = NA, 
+                        position = position_dodge(width=0.9))+
+  geom_point(position=position_jitterdodge(dodge.width=0.9),size = 3) +
+theme_bw()+theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 14))+labs(x="", y = "MT Copy Number", title = "Mt CN and Ploidy (assumed that all ploidy are *2)")+scale_color_manual(values = c("black", "black"))
+
+library(gridExtra)
+#pdf("Tetraploid vs Diploid.pdf", 15,8)
+#grid.arrange(plot1, plot2, ncol = 2)
+dev.off()
+
+```
+
+
+### Average Mitochondrial mutation rate per year across locations
+
+Here we assess whether there are certain locations that have a higher MT mutation rate per year. Specifically, we focus on Forestier which experienced a culling in the early 2000s.
+
+```{r Average Mutation Rate Per Year}
+#--------------------------------------------------#
+
+# Average Mutation Rate/Year (specifically DFT1, excluding DFT2)
+# Haplotype.tumors
+Haplotype.tumors$Defining.variants<-gsub(",", "", Haplotype.tumors$Defining.variants)
+Haplotype.tumors$No.variants<-NA
+for(x in 1:nrow(Haplotype.tumors)){
+Haplotype.tumors$No.variants[x]<-length((unlist(str_split(Haplotype.tumors$Defining.variants, ";")[x])))}
+Haplotype.tumors$No.variants[which(Haplotype.tumors$Defining.variants=='No variants')]<-0
+
+Haplotype.tumors.DFT1<-Haplotype.tumors[-match(Haplotype.tumors1$Sample.TCG_ID, Haplotype.tumors$TCG_ID),]
+
+list.year<-unique(Haplotype.tumors.DFT1$Year)
+list.avg.mut.total<-matrix(ncol = 2, nrow = 0, dimnames= list(NULL, c("Year", "No.mutations")))
+for(x in 1:length(list.year)){
+  avg.var<-mean(as.numeric(as.character(Haplotype.tumors.DFT1$No.variants[which(as.numeric(as.character(Haplotype.tumors.DFT1$Year)) == as.numeric(as.character(list.year[x])))])))
+  list.avg.mut.total<-rbind(list.avg.mut.total, cbind(as.numeric(as.character(list.year[x])), avg.var))
+}
+
+list.avg.mut.total.no.Forestier<-matrix(ncol = 2, nrow = 0, dimnames= list(NULL, c("Year", "No.mutations")))
+Haplotype.no.Forestier<-Haplotype.tumors.DFT1[-which(grepl('Forestier', Haplotype.tumors.DFT1$Location)),]
+for(x in 1:length(list.year)){
+  avg.var<-mean(as.numeric(as.character(Haplotype.no.Forestier$No.variants[which(as.numeric(as.character(Haplotype.no.Forestier$Year)) == as.numeric(as.character(list.year[x])))])))
+  list.avg.mut.total.no.Forestier<-rbind(list.avg.mut.total.no.Forestier, cbind(as.numeric(as.character(list.year[x])), avg.var))
+}
+
+list.avg.mut.total.Forestier<-matrix(ncol = 2, nrow = 0, dimnames= list(NULL, c("Year", "No.mutations")))
+Haplotype.Forestier<-Haplotype.tumors.DFT1[which(grepl('Forestier', Haplotype.tumors.DFT1$Location)),]
+for(x in 1:length(list.year)){
+  avg.var<-mean(as.numeric(as.character(Haplotype.Forestier$No.variants[which(as.numeric(as.character(Haplotype.Forestier$Year)) == as.numeric(as.character(list.year[x])))])))
+  list.avg.mut.total.Forestier<-rbind(list.avg.mut.total.Forestier, cbind(as.numeric(as.character(list.year[x])), avg.var))
+}
+
+
+# Plot mutations per year
+pdf("Combined.Forestier.pdf", 15,5)
+par(mfrow = c(1, 3))
+plot(list.avg.mut.total[,1], list.avg.mut.total[,2], pch = 16, cex = 1.5, xlab = 'Year', ylab = 'Avg No. Mutations', main = 'All Locations: Avg Mutations per Year')
+axis(side = 1, seq(2003,2016,1))
+
+Forestier.reg<-lm(list.avg.mut.total.Forestier[,2]~list.avg.mut.total.Forestier[,1])
+plot(list.avg.mut.total.Forestier[,1], list.avg.mut.total.Forestier[,2], pch = 16, cex = 1.5, xlab = 'Year', ylab = 'Avg No. Mutations', main= 'Forestier: Avg Mutations per Year')
+abline(Forestier.reg)
+axis(side = 1, seq(2003,2016,1))
+
+no.Forestier.reg<-lm(list.avg.mut.total.no.Forestier[,2]~list.avg.mut.total.no.Forestier[,1])
+plot(list.avg.mut.total.no.Forestier[,1], list.avg.mut.total.no.Forestier[,2], pch = 16, cex = 1.5, xlab = 'Year', ylab = 'Avg No. Mutations', main = 'Excluding Forestier: Avg Mutations per Year')
+abline(no.Forestier.reg)
+axis(side = 1, seq(2003,2016,1))
+dev.off()
+
+lm_eqn <- function(y, x, z){
+    m <- lm(y ~ poly(x, z));
+    eq <- substitute(italic(y) == b %.% italic(x)^italic(z)* + a*","~~italic(r)^2~"="~r2, 
+         list(a = format(coef(m)[1], digits = 2), 
+              b = format(coef(m)[2], digits = 2), 
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    gsub("z", z, as.character(as.expression(eq)));                 
+}
+
+
+
+# Polynomial
+poly<-ggplot()+
+  geom_point(aes(list.avg.mut.total.no.Forestier[,1], list.avg.mut.total.no.Forestier[,2], colour = 'red'), size = 3)+
+  geom_smooth(aes(list.avg.mut.total.no.Forestier[,1], list.avg.mut.total.no.Forestier[,2], colour = 'red'),method = "lm", formula = y ~ poly(x, 2), colour = "red", alpha = .15, fill = 'darkred')+
+  geom_text(aes(2015, 1), label = lm_eqn(list.avg.mut.total.no.Forestier[,2], list.avg.mut.total.no.Forestier[,1], 2), parse = TRUE)+
+  geom_point(aes(list.avg.mut.total.Forestier[,1], list.avg.mut.total.Forestier[,2], colour = 'darkgreen'), size = 3)+
+  geom_smooth(aes(list.avg.mut.total.Forestier[,1], list.avg.mut.total.Forestier[,2]),method = "lm", colour = "darkgreen", alpha = .2, fill = 'darkgreen')+
+  geom_text(aes(2010, 5), label = lm_eqn(list.avg.mut.total.Forestier[,2], list.avg.mut.total.Forestier[,1], 1), parse = TRUE)+
+  scale_x_continuous(breaks = seq(2003,2016,1), name = 'Year')+
+  scale_y_continuous(breaks = seq(0,8,2), name = "No. of somatic mutations")+
+  labs(title = "Average Number of Mutations Across Years: Poly Reg")+
+  theme_bw()+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank())+
+  scale_colour_manual(values = c('red'='red', 'darkgreen' = 'darkgreen'), labels = c("Forestier","Exclude Forestier"), guide = guide_legend(title = NULL))
+
+# linear
+lin<-ggplot()+
+  geom_point(aes(list.avg.mut.total.no.Forestier[,1], list.avg.mut.total.no.Forestier[,2], colour = 'red'), size = 3)+
+  geom_smooth(aes(list.avg.mut.total.no.Forestier[,1], list.avg.mut.total.no.Forestier[,2], colour = 'red'),method = "lm", formula = y ~ poly(x, 1), colour = "red", alpha = .15, fill = 'darkred')+
+  geom_text(aes(2015, 1), label = lm_eqn(list.avg.mut.total.no.Forestier[,2], list.avg.mut.total.no.Forestier[,1], 1), parse = TRUE)+
+  geom_point(aes(list.avg.mut.total.Forestier[,1], list.avg.mut.total.Forestier[,2], colour = 'darkgreen'), size = 3)+
+  geom_smooth(aes(list.avg.mut.total.Forestier[,1], list.avg.mut.total.Forestier[,2]),method = "lm", colour = "darkgreen", alpha = .2, fill = 'darkgreen')+
+  geom_text(aes(2010, 5), label = lm_eqn(list.avg.mut.total.Forestier[,2], list.avg.mut.total.Forestier[,1], 1), parse = TRUE)+
+  scale_x_continuous(breaks = seq(2003,2016,1), name = 'Year')+
+  scale_y_continuous(breaks = seq(0,8,2), name = "No. of somatic mutations")+
+  labs(title = "Average Number of Mutations Across Years: Lin Reg")+
+  theme_bw()+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank())+
+  scale_colour_manual(values = c('red'='red', 'darkgreen' = 'darkgreen'), labels = c("Forestier","Exclude Forestier"), guide = guide_legend(title = NULL))
+
+#pdf('mutation.fit.pdf', 12,15)
+grid.arrange(poly, lin, ncol=1)
+dev.off()
+
+```
+
+
+### MT Copy Number across Haplotypes
+Here, we assess whether  haplogroups have different Mt copy numbers.
+
+```{r}
+# Haplotype and Host contamination/Location
+tumor.combined.final$Haplogroup.1<-factor(tumor.combined.final$Haplogroup, levels = c("DFT1_0", "DFT1_1", "DFT1_1", "DFT1_2", "DFT1_3", "DFT1_4", "DFT1_5", "DFT1_6", "DFT1_7", "DFT1_8", "DFT1_9", "DFT1_10", "DFT1_11","DFT1_12","DFT1_13", "DFT1_14", "DFT1_15","DFT1_16", "DFT1_17","DFT1_18","DFT1_19","DFT1_20", "DFT2_0"))
+ggplot(tumor.combined.final, aes(Haplogroup.1, MTCN.CN))+geom_boxplot(outlier.color = 'white')+geom_jitter(size = 1.5, width = .3, alpha = .5)+theme_bw()+labs(y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number and Haplogroup", x = "")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank())
+
+
+pdf('Host_contamination_MTCN_haplogroup.pdf', 22,10)
+plot1<-ggplot(tumor.combined.final, aes(Haplogroup.1, CN))+geom_boxplot(outlier.color = 'white')+geom_jitter(size = 2, width = .3, alpha = .5)+theme_bw()+labs(y = "Prop. of Host Contamination", title = "Host Contamination and Haplogroup", x = "")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 13))
+plot2<-ggplot(tumor.combined.final, aes(Haplogroup.1, MTCN.CN))+geom_boxplot(outlier.color = 'white')+geom_jitter(size = 2, width = .3, alpha = .5)+theme_bw()+labs(y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number and Haplogroup", x = "")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 13))
+grid.arrange(plot1, plot2, ncol = 1)
+dev.off()
+
+
+
+pdf('Host_contamination_MTCN_haplogroup.closer.pdf', 11,5)
+ggplot(tumor.combined.final[which(tumor.combined.final$Haplogroup.1=="DFT1_0"|tumor.combined.final$Haplogroup.1=="DFT1_1"|tumor.combined.final$Haplogroup.1=="DFT1_2"|tumor.combined.final$Haplogroup.1=="DFT1_3"|tumor.combined.final$Haplogroup.1=="DFT1_4"|tumor.combined.final$Haplogroup.1=="DFT1_5"|tumor.combined.final$Haplogroup.1=="DFT1_6"|tumor.combined.final$Haplogroup.1=="DFT1_7"|tumor.combined.final$Haplogroup.1=="DFT1_8"|tumor.combined.final$Haplogroup.1=="DFT1_9"),], aes(Haplogroup.1, MTCN.CN))+geom_boxplot(outlier.color = 'white')+geom_jitter(size = 2, width = .3, alpha = .5)+theme_bw()+labs(y = "Mitochondrial Copy Number", title = "Mitochondrial Copy Number and Haplogroup", x = "")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black"), legend.background = element_blank(), axis.text = element_text(size = 13))
+dev.off()
+
+
+```
+
+
+
