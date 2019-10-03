@@ -1,0 +1,1161 @@
+---
+title: "WPP_study"
+author: "Young Kwon"
+date: "May 15, 2017"
+output: html_document
+---
+
+
+```{r Libraries}
+library(xlsx)
+library(ggplot2)
+library(stringr)
+```
+
+
+
+
+```{r Merge with Sample Database}
+
+haplo.samp<-read.xlsx2("~/Desktop/PCR_WPP/2017-4-09_v12_Haplotype_Sample_Info.xlsx", 1, stringsAsFactors=FALSE)
+
+samp.data<-read.xlsx2("~/Documents/Tasmanian_Devil/sample database/Devil sample database_update_12_5_17 (version 1).xlsx", 1, stringsAsFactors=FALSE)
+
+haplo.samp$TCG_ID<-gsub("[[:alpha:]].*", "", haplo.samp$Sample.TCG_ID)
+
+haplo.idx<-which(haplo.samp$Location=="")
+haplo.new.info.idx<-match(haplo.samp$TCG_ID[which(haplo.samp$Location=="")], 
+                    samp.data$TCG_ID)
+
+haplo.samp$Location[haplo.idx]<-samp.data$Location[haplo.new.info.idx]
+haplo.samp$Year[haplo.idx]<-samp.data$Year.samples.collected..yyyy.[haplo.new.info.idx]
+
+#write.xlsx2(haplo.samp, file = paste0(Sys.Date(), "temp.haplo.samp.xlsx"), row.names = FALSE)
+
+# Add Locations
+Location_Coordinates <- read.csv("~/Documents/Tasmanian_Devil/Low Coverage_WGS/Data Analyses/Copy Number/CN/Location_Coordinates.csv", stringsAsFactors=FALSE)
+
+```
+
+
+
+```{r Mutational Spectra}
+
+# libraries
+require(xlsx)
+require(stringr)
+library(dplyr)
+
+# Load Haplotype Summary
+
+haplo.summary<-read.xlsx2("~/Documents/Tasmanian_Devil/Low Coverage_WGS/Data Analyses/Mitochondrial/2017-04-09_Haplotype_Summary_Overview.xlsx", 1)
+
+
+# Mutational Spectra
+somatic.variant<-unique(unlist(str_split(gsub(" ", "", unlist(
+                      str_split(haplo.summary$Defining.Variant.s., ";"))), ",")))
+somatic.variant<-somatic.variant[-1]
+som.var<-gsub(".*[[:digit:]]","",somatic.variant)
+count.som.var<-as.data.frame(table(som.var))
+count.som.var$som.var<-as.character(count.som.var$som.var)
+#count.som.var<-rbind(count.som.var, c("C>G", 0), c("G>T", 0), c("T>G", 0))
+
+
+ref.alt<-matrix(c("A>C", "T>G",
+                  "A>G", "T>C",
+                  "A>T", "T>A",
+                  "C>A", "C>A",
+                  "C>T", "C>T",
+                  "C>G", "C>G",
+                  "G>A", "C>T",
+                  "G>C", "C>G",
+                  "G>T", "C>A",
+                  "T>A", "T>A",
+                  "T>C", "T>C",
+                  "T>G", "T>G"), 
+                ncol = 2, byrow=TRUE)
+colnames(ref.alt)<-c("som.var", "alt")
+
+som.var.figure<-merge(ref.alt, count.som.var, by = "som.var", all.x = TRUE)
+som.var.figure$group<-ifelse(grepl("A>|G>", som.var.figure$som.var), 
+                            "Purine", "Pyrimidine")
+som.var.figure$Freq[which(is.na(som.var.figure$Freq))]<-0
+som.var.figure$Freq[which(som.var.figure$group=="Purine")]<- (-1)*som.var.figure$Freq[which(som.var.figure$group=="Purine")]
+som.var.figure$factor<-as.factor(som.var.figure$alt)
+
+
+
+ggplot(som.var.figure, aes(x= alt, y=Freq, fill=group)) + 
+  geom_bar(stat="identity", position="identity")+
+  xlab("")+
+  ylab("Frequency")+
+  labs(fill = "")+
+  scale_fill_hc()+
+  ggtitle("MT Somatic Mutational Spectra: Pyrmidine Context Based")+
+  theme_bw()+
+    theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+```
+
+
+
+
+```{r VEP Output}
+
+VEP.input<-data.frame(CHR = 'MT',
+           START = sub("[[:alpha:]].*","",somatic.variant),
+           END = sub("[[:alpha:]].*","",somatic.variant),
+           MUT=gsub(">", "/",gsub(".*[[:digit:]]","",somatic.variant)),
+           STR = '+')
+
+write.table(VEP.input, file = paste0(Sys.Date(), "_VEP_input.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+
+```
+
+
+```{r VEP Analyses}
+
+### VEP Somatic Output ###
+VEP.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP//VEP_output_4_9_17.Consequence_ne_-_and_Consequence_ne_synonymous_variant.txt")
+
+VEP.somatic$POS<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[2])
+VEP.somatic$Chrom<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[1])
+VEP.somatic$Mut<-rapply(str_split(VEP.somatic$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.somatic$Mut<-gsub("/", ">", VEP.somatic$Mut)
+
+## Extract the Impacts: Low-High
+VEP.somatic.impact<-VEP.somatic[which(VEP.somatic$IMPACT == "LOW"|VEP.somatic$IMPACT == "MODERATE"|VEP.somatic$IMPACT == "HIGH"),]
+
+
+
+# Graph of the genes and the impact factors: stacked barplot
+ggplot(VEP.somatic.impact, aes(SYMBOL, fill = Consequence))+geom_bar()+
+  labs(x = "MT Genes",
+       y = "Count",
+       title = "Somatic MT Variants", fill = "Mutation type")+
+  scale_fill_ptol() + 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+## 
+VEP.all<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/VEP_output_4_9_17_downstream_upstream_included.txt")
+
+VEP.all<-VEP.all[which(VEP.all$DISTANCE=="-"),]
+VEP.all$Mut<-rapply(str_split(VEP.all$X.Uploaded_variation, "_"), function(x) x[3])
+VEP.all$Mut<-gsub("/", ">", VEP.all$Mut)
+count.VEP.all<-as.data.frame(table(VEP.all[, c("Mut", "STRAND")]))
+colnames(count.VEP.all)<-c("som.var", "Strand", "Freq")
+
+count.VEP.all<-merge(ref.alt, count.VEP.all, by = "som.var", all.x=TRUE)
+temp<-count.VEP.all[which(is.na(count.VEP.all$Freq)),]
+count.VEP.all$Strand[which(is.na(count.VEP.all$Freq))]<-1
+count.VEP.all$Freq[which(is.na(count.VEP.all$Freq))]<-0
+temp$Strand<- -1
+temp$Freq<- 0
+count.VEP.all<-rbind(count.VEP.all, temp)
+count.VEP.all$Freq[which(count.VEP.all$Strand=="-1")]<- (-1)*count.VEP.all$Freq[which(count.VEP.all$Strand=="-1")]
+
+
+count.VEP.all$group<-ifelse(grepl("A>|G>", count.VEP.all$som.var), 
+                            "Purine", "Pyrimidine")
+
+ggplot(count.VEP.all, aes(x= som.var, y=Freq, fill=Strand)) + 
+  geom_bar(stat="identity", position="identity", width=.95)+
+  xlab("")+
+  ylab("Frequency")+
+  labs(fill = "Strand")+
+  scale_fill_wsj()+
+  facet_grid(.~alt, scales = "free_x")+
+  ggtitle("MT Somatic Mutational Spectra: Pyrmidine Context Based and Strand")+
+  theme_bw()+
+    theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing.x = unit(.2, "lines"),
+    panel.background = element_blank(),
+    #strip.background = element_blank(),
+    #strip.text = element_blank(),
+    panel.spacing = unit(0, "lines")) 
+
+
+
+
+### VEP ALL Somatic Output ###
+VEP.all.somatic<- read.delim("~/Documents/Tasmanian_Devil/Haplogroup_mitochondrial/Annotation_4_9_17/VEP/VEP_output_4_9_17.txt")
+
+VEP.all.somatic<-VEP.all.somatic[-which(VEP.all.somatic$Consequence=="-"),]
+VEP.all.somatic$DN.DS<-ifelse(grepl("start|stop|missense", VEP.all.somatic$Consequence), "non-synonymous", "synonymous")
+
+ggplot(VEP.all.somatic, aes(Consequence, fill = Consequence))+geom_bar()+
+  labs(x = "Mutation type",
+       y = "Count",
+       title = "Somatic MT Variants: Mutation Type", fill = "")+
+  scale_fill_manual(values =c("#B35044", "#EE9489", "#F3B8B0", "#79ADD4"))+ 
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 18),
+    #axis.title.y = element_text(vjust = 1.1, size = 14),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+write.table(VEP.somatic.impact, file = "../VEP_4_9_17/VEP.somatic.impact.txt", row.names = FALSE, sep = "\t")
+```
+
+
+
+```{r WPP}
+setwd("~/Desktop")
+
+haplo.samp<-read.xlsx2("~/Desktop/2017-11-05_v12_Haplotype_Sample_Info.xlsx", 1)
+host.samp<-read.xlsx2("~/Desktop/2017-11-05_v12_Haplotype_Sample_Info.xlsx", 3)
+
+
+WPP.samp<-rbind(haplo.samp[grep("WPP", haplo.samp$Location),], haplo.samp[grep("Pencil", haplo.samp$Location),])
+WPP.samp$Year<-gsub("'", "", WPP.samp$Year)
+WPP.host<-rbind(host.samp[grep("WPP", host.samp$Location),], host.samp[grep("Pencil", host.samp$Location),])
+WPP.host$Year<-gsub("'", "", WPP.host$Year)
+
+
+overall.tumor<-ggplot(WPP.samp, aes(Haplogroup))+geom_bar(fill = "#6E779A")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Tumors")+
+  ggtitle("Tumor Haplogroups in WPP")+
+  scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18", "DFT1_22"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(size = 16, margin = margin(t = 10, b = 5)),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(margin = margin(r=10), size = 18),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+Time.WPP.samp<-data.frame(WPP.samp$Haplogroup,WPP.samp$Year, WPP.samp$Complete.Haplotype)
+colnames(Time.WPP.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18", "DFT1_22")))
+Time.WPP.samp$Location<-"WPP.tumor"
+
+
+Time.WPP.host<-data.frame(WPP.host$Haplogroup,WPP.host$Year, WPP.host$Complete.Haplotype)
+colnames(Time.WPP.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.WPP.host$Haplotype<-factor(Time.WPP.host$Haplotype, levels = c("TD_0", "TD_01A1a1", 
+                                                                      "TD_01A1a2", "TD_01A1a3A1", 
+                                                                      "TD_01A1a3A1b", "TD_01A1a3A1i", 
+                                                                      "TD_01A2", "TD_01A2a1A1a2",
+                                                                      "TD_01A3a1A2a", "TD_01A3a1A2a5",
+                                                                      "TD_01A3a4", "TD_03", "TD_05"))
+
+
+Time.WPP.host$Haplogroup<-factor(Time.WPP.host$Haplogroup, levels = c("TD_0", "TD_01", "TD_03", "TD_05"))
+
+
+
+Time.WPP.host$Location<-"WPP.host"
+
+across.time.tumors<-ggplot(Time.WPP.samp, aes(Year, fill = factor(Haplogroup)))+
+  geom_bar(color="black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey", "#315195", "#F1C33B", "#8A3CD5", "#A5153E", "#6E779A")))+
+  xlab("")+
+  ylab("No. of Tumors")+
+  labs(fill = "Haplogroup")+
+  ggtitle("Tumor Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+across.time.hosts<-ggplot(Time.WPP.host, aes(Year, fill = factor(Haplogroup)))+
+  geom_bar()+
+  theme_bw() + 
+  #scale_fill_manual(values = c("grey", "#315195", "#F1C33B", "#8A3CD5", "#A5153E")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Devil Haplogroup")+
+  ggtitle("Devil Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+# Across Tumor Haplotypes
+
+
+
+overall.host<-ggplot(WPP.host, aes(WPP.host$Haplogroup))+geom_bar(fill = "#9A856E")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Hosts")+
+  ggtitle("Host Haplogroups in WPP")+
+  scale_x_discrete(limits = c("TD_0", "TD_01", "TD_03", "TD_011"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2),
+    axis.title.y = element_text(vjust = 1.1, size = 18),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+overall.host.haplo<-ggplot(WPP.host, aes(WPP.host$Haplogroup))+geom_bar(fill = "#9A856E")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Hosts")+
+  ggtitle("Host Haplogroups in WPP")+
+  scale_x_discrete(limits = c("TD_0", "TD_01", "TD_03", "TD_011"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 13),
+    axis.text.y = element_text(angle = 45, hjust = 1.2, size = 13),
+    axis.title.y = element_text(vjust = 1.1, size = 18),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+require(gridExtra)
+require(cowplot)
+pdf("WPP.tumor.pdf", width=18,height = 8)
+plot_grid(overall.tumor, across.time.tumors, align = "h", ncol = 2, rel_widths = c(1.5/4, 2.5/4))
+dev.off()
+
+
+
+```
+
+
+
+```{r}
+setwd("~/Desktop")
+
+haplo.samp<-read.xlsx2("~/Desktop/2017-1-05_v12_Haplotype_Sample_Info.xlsx", 1)
+host.samp<-read.xlsx2("~/Desktop/2017-1-05_v12_Haplotype_Sample_Info.xlsx", 3)
+
+
+Nar.samp<-rbind(haplo.samp[grep("Narawntapu", haplo.samp$Location),], haplo.samp[grep("Narawntapu", haplo.samp$Location),])
+Nar.samp$Year<-gsub("'", "", Nar.samp$Year)
+Nar.host<-rbind(host.samp[grep("Narawntapu", host.samp$Location),], host.samp[grep("Narawntapu", host.samp$Location),])
+Nar.host$Year<-gsub("'", "", Nar.host$Year)
+
+
+overall.tumor<-ggplot(WPP.samp, aes(WPP.samp$Haplogroup))+geom_bar(fill = "#6E779A")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Tumors")+
+  ggtitle("Tumor Haplogroups in WPP")+
+  scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2),
+    axis.title.y = element_text(vjust = 1.1),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+Time.Nar.samp<-data.frame(Nar.samp$Haplogroup,Nar.samp$Year, Nar.samp$Complete.Haplotype)
+colnames(Time.Nar.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.samp$Haplogroup<-factor(Time.Nar.samp$Haplogroup, levels = rev(c("DFT1_1", "DFT1_2", "DFT1_4"
+                                                                          #"DFT1_21"
+                                                                          )))
+
+
+Time.Nar.host<-data.frame(Nar.host$Haplogroup,Nar.host$Year, Nar.host$Complete.Haplotype)
+colnames(Time.Nar.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.host$Haplotype<-factor(Time.Nar.host$Haplotype, levels = c("TD_0", "TD_01A1a1", 
+                                                                      "TD_01A1a2", "TD_01A1a3A1", 
+                                                                      "TD_01A1a3A1b", "TD_01A1a3A1i", 
+                                                                      "TD_01A2", "TD_01A2a1A1a2",
+                                                                      "TD_01A3a1A2a", "TD_01A3a1A2a5",
+                                                                      "TD_01A3a4", "TD_03", "TD_05"))
+Time.Nar.host$Location<-"Nar.host"
+
+
+Time.Nar.samp<-data.frame(Nar.samp$Haplogroup,Nar.samp$Year, Nar.samp$Complete.Haplotype)
+colnames(Time.Nar.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.samp$Haplogroup<-factor(Time.Nar.samp$Haplogroup, levels = rev(c("DFT1_1", "DFT1_2", "DFT1_4"
+                                                                          #"DFT1_21"
+                                                                          )))
+Time.Nar.samp$Location<-"Nar.tumor"
+
+
+
+
+
+Nar.samp<-rbind(haplo.samp[grep("Narawntapu", haplo.samp$Location),], haplo.samp[grep("Narawntapu", haplo.samp$Location),])
+Nar.samp$Year<-gsub("'", "", Nar.samp$Year)
+Nar.host<-rbind(host.samp[grep("Narawntapu", host.samp$Location),], host.samp[grep("Narawntapu", host.samp$Location),])
+Nar.host$Year<-gsub("'", "", Nar.host$Year)
+
+
+
+
+
+
+
+across.time.tumors<-ggplot(Time.WPP.samp, aes(Year, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity")+
+  theme_bw() + 
+  #scale_x_continuous(limits = c(2005, 2016))
+  scale_fill_manual(values = rev(c( "#EC8D1B","#315195", "#A839DB")))+
+  xlab("")+
+  ylab("No. of Tumors")+
+  labs(fill = "Haplogroup")+
+  ggtitle("Tumor Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+across.time.hosts<-ggplot(Total, aes(Year, fill = factor(Haplogroup)))+
+  geom_bar()+
+  theme_bw() + 
+  #scale_fill_manual(values = c("grey", "#315195", "#F1C33B", "#8A3CD5", "#A5153E")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Devil Haplogroup")+
+  ggtitle("Devil Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+# Across Tumor Haplotypes
+
+
+
+overall.host<-ggplot(WPP.host, aes(WPP.host$Haplogroup))+geom_bar(fill = "#9A856E")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Hosts")+
+  ggtitle("Host Haplogroups in WPP")+
+  scale_x_discrete(limits = c("TD_0", "TD_01", "TD_03", "TD_011"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2),
+    axis.title.y = element_text(vjust = 1.1, size = 18),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+overall.host.haplo<-ggplot(WPP.host, aes(WPP.host$Haplogroup))+geom_bar(fill = "#9A856E")+theme_bw() + 
+  xlab("")+
+  ylab("No. of Hosts")+
+  ggtitle("Host Haplogroups in WPP")+
+  scale_x_discrete(limits = c("TD_0", "TD_01", "TD_03", "TD_011"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2),
+    axis.title.y = element_text(vjust = 1.1, size = 18),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+pdf("WPP.tumor.pdf", 8,6)
+across.time.tumors
+dev.off()
+
+
+haplo.samp$Year<-gsub("'", "", haplo.samp$Year)
+
+
+Nar.samp<-rbind(haplo.samp[grep("Narawntapu", haplo.samp$Location),], haplo.samp[grep("Narawntapu", haplo.samp$Location),])
+Nar.samp$Year<-gsub("'", "", Nar.samp$Year)
+Nar.host<-rbind(host.samp[grep("Narawntapu", host.samp$Location),], host.samp[grep("Narawntapu", host.samp$Location),])
+Nar.host$Year<-gsub("'", "", Nar.host$Year)
+
+WPP.samp<-rbind(haplo.samp[grep("WPP", haplo.samp$Location),], haplo.samp[grep("Pencil", haplo.samp$Location),])
+WPP.samp$Year<-gsub("'", "", WPP.samp$Year)
+WPP.host<-rbind(host.samp[grep("WPP", host.samp$Location),], host.samp[grep("Pencil", host.samp$Location),])
+WPP.host$Year<-gsub("'", "", WPP.host$Year)
+
+
+Fentonbury.samp<-rbind(haplo.samp[grep("Fentonbury", haplo.samp$Location),], haplo.samp[grep("Fentonbury", haplo.samp$Location),])
+Fentonbury.samp$Year<-gsub("'", "", Fentonbury.samp$Year)
+Fentonbury.host<-rbind(host.samp[grep("Fentonbury", host.samp$Location),], host.samp[grep("Fentonbury", host.samp$Location),])
+Fentonbury.host$Year<-gsub("'", "", Fentonbury.host$Year)
+
+
+Forestier.samp<-rbind(haplo.samp[grep("Forestier", haplo.samp$Location),], haplo.samp[grep("Forestier", haplo.samp$Location),])
+Forestier.samp$Year<-gsub("'", "", Forestier.samp$Year)
+Forestier.host<-rbind(host.samp[grep("Forestier", host.samp$Location),], host.samp[grep("Forestier", host.samp$Location),])
+Forestier.host$Year<-gsub("'", "", Forestier.host$Year)
+
+
+Kempton.samp<-rbind(haplo.samp[grep("Kempton", haplo.samp$Location),], haplo.samp[grep("Kempton", haplo.samp$Location),])
+Kempton.samp$Year<-gsub("'", "", Kempton.samp$Year)
+Kempton.host<-rbind(host.samp[grep("Kempton", host.samp$Location),], host.samp[grep("Kempton", host.samp$Location),])
+Kempton.host$Year<-gsub("'", "", Kempton.host$Year)
+
+
+Bronte.samp<-rbind(haplo.samp[grep("Bronte", haplo.samp$Location),], haplo.samp[grep("Bronte", haplo.samp$Location),])
+Bronte.samp$Year<-gsub("'", "", Bronte.samp$Year)
+Bronte.host<-rbind(host.samp[grep("Bronte", host.samp$Location),], host.samp[grep("Bronte", host.samp$Location),])
+Bronte.host$Year<-gsub("'", "", Bronte.host$Year)
+
+
+
+
+Time.Bronte.host<-data.frame(Bronte.host$Haplogroup,Bronte.host$Year, Bronte.host$Complete.Haplotype)
+colnames(Time.Bronte.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Bronte.host$Location<-"Bronte.host"
+
+
+Time.Bronte.samp<-data.frame(Bronte.samp$Haplogroup,Bronte.samp$Year, Bronte.samp$Complete.Haplotype)
+colnames(Time.Bronte.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Bronte.samp$Location<-"Bronte.tumor"
+
+
+
+
+
+Time.Nar.host<-data.frame(Nar.host$Haplogroup,Nar.host$Year, Nar.host$Complete.Haplotype)
+colnames(Time.Nar.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.host$Location<-"Nar.host"
+
+
+Time.Nar.samp<-data.frame(Nar.samp$Haplogroup,Nar.samp$Year, Nar.samp$Complete.Haplotype)
+colnames(Time.Nar.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.samp$Location<-"Nar.tumor"
+
+
+
+Time.Forestier.host<-data.frame(Forestier.host$Complete.Haplotype,Forestier.host$Year, Forestier.host$Complete.Haplotype)
+colnames(Time.Forestier.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Forestier.host$Location<-"Forestier.host"
+
+
+Time.Forestier.samp<-data.frame(Forestier.samp$Complete.Haplotype,Forestier.samp$Year, Forestier.samp$Complete.Haplotype)
+colnames(Time.Forestier.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Forestier.samp$Location<-"Forestier.tumor"
+
+
+
+
+
+Time.Fentonbury.host<-data.frame(Fentonbury.host$Haplogroup,Fentonbury.host$Year, Fentonbury.host$Complete.Haplotype)
+colnames(Time.Fentonbury.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Fentonbury.host$Location<-"Fentonbury.host"
+
+
+Time.Fentonbury.samp<-data.frame(Fentonbury.samp$Haplogroup,Fentonbury.samp$Year, Fentonbury.samp$Complete.Haplotype)
+colnames(Time.Fentonbury.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Fentonbury.samp$Location<-"Fentonbury.tumor"
+
+
+
+
+Time.Kempton.host<-data.frame(Kempton.host$Haplogroup,Kempton.host$Year, Kempton.host$Complete.Haplotype)
+colnames(Time.Kempton.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Kempton.host$Location<-"Kempton.host"
+
+
+Time.Kempton.samp<-data.frame(Kempton.samp$Haplogroup,Kempton.samp$Year, Kempton.samp$Complete.Haplotype)
+colnames(Time.Kempton.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Kempton.samp$Location<-"Kempton.tumor"
+
+
+
+
+
+Time.WPP.samp<-data.frame(WPP.samp$Haplogroup,WPP.samp$Year, WPP.samp$Complete.Haplotype)
+colnames(Time.WPP.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.WPP.samp$Location<-"WPP.tumor"
+
+
+Time.WPP.host<-data.frame(WPP.host$Haplogroup,WPP.host$Year, WPP.host$Complete.Haplotype)
+colnames(Time.WPP.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.WPP.host$Location<-"WPP.host"
+
+
+filler<-t(as.data.frame(c("NA", 2013, "NA", "NA")))
+colnames(filler)<-colnames(Time.Nar.samp)
+Total<-rbind(Time.Nar.samp, Time.Nar.host, 
+             Time.WPP.samp, Time.WPP.host, 
+             Time.Bronte.samp, Time.Bronte.host,
+             Time.Kempton.samp, Time.Kempton.host,
+             Time.Fentonbury.samp, Time.Fentonbury.host,
+              Time.Forestier.samp, Time.Forestier.host
+             )
+Total$Year<-as.numeric(as.character(Total$Year))
+Total<-as.data.frame(table(Total$Haplogroup, Total$Year, Total$Location))
+Total<-Total[-which(Total$Var1==""),]
+colnames(Total)<-c("Haplogroup", "Year", "Location", "Freq")
+
+
+Time.WPP.samp<-Total[which(Total$Location=="WPP.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0",  "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18")))
+
+WPP<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey", "#315195", "#F1C33B", "#F57F7F", "#A5153E")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("West Pencil Pine")+
+  scale_x_continuous(breaks = seq(2003,2016,1))+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Nar.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_1", "DFT1_2", "DFT1_4")))
+
+Nar<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("#E5881F", "#315195", "#22BAC7")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Narawntapu")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_x_continuous(breaks = seq(2003,2016,1))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Bronte.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2")))
+
+Bronte<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey", "#315195")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Bronte")+
+    scale_x_continuous(breaks = seq(2003,2016,1))+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Fentonbury.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2", "DFT1_4", "DFT1_22")))
+
+Fenton<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey", "#315195",  "#22BAC7", "#90EC89")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Fentonbury")+
+    scale_x_continuous(breaks = seq(2003,2016,1))+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Kempton.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2", "DFT1_6", "DFT1_7",
+                                                                          "DFT1_13", "DFT1_16", "DFT1_19")))
+
+Kempton<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey", "#315195",  "#ECA189", "#B80A0A", "#E864E4", "#9660C6", "#87C660")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Kempton")+
+    scale_x_continuous(breaks = seq(2003,2016,1))+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Forestier.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_3A", "DFT1_3A4a", "DFT1_3A5", "DFT1_3A6",
+                                                                          "DFT1_3A2a", "DFT1_3A2a1", "DFT1_3A2a1A",
+                                                                          "DFT1_3A3a", "DFT1_3A3a1")))
+
+Forestier<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity", color = "black")+
+  theme_bw() + 
+  scale_fill_brewer(type = "seq", palette = 1, direction = 1)+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Forestier")+
+    scale_x_continuous(breaks = seq(2003,2016,1))+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+pdf("graph.tumor.pdf", height = 19, width = 25)
+grid.arrange(WPP, Nar, Bronte, Fenton, Forestier, Kempton, ncol = 2)
+dev.off()
+
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Nar.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_1", "DFT1_2", "DFT1_4", "DFT1_5", "DFT1_17", "DFT1_18")))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Nar.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+
+
+
+
+#------------------------#
+Time.Nar.host<-data.frame(Nar.host$Haplogroup,Nar.host$Year, Nar.host$Complete.Haplotype)
+colnames(Time.Nar.host)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.host$Location<-"Nar.host"
+
+
+Time.Nar.samp<-data.frame(Nar.samp$Haplogroup,Nar.samp$Year, Nar.samp$Complete.Haplotype)
+colnames(Time.Nar.samp)<-c("Haplogroup", "Year", "Haplotype")
+Time.Nar.samp$Location<-"Nar.tumor"
+
+
+Time.WPP.samp<-data.frame(WPP.samp$Haplogroup,WPP.samp$Year, WPP.samp$Complete.Haplotype)
+colnames(Time.WPP.samp)<-c("Haplogroup", "Year", "Haplotype", "TCG_ID")
+Time.WPP.samp$Location<-"WPP.tumor"
+
+
+Time.WPP.host<-data.frame(WPP.host$Haplogroup,WPP.host$Year, WPP.host$Complete.Haplotype, WPP.host$Sample.TCG_ID)
+colnames(Time.WPP.host)<-c("Haplogroup", "Year", "Haplotype", "TCG_ID")
+Time.WPP.host$Location<-"WPP.host"
+
+
+filler<-t(as.data.frame(c("NA", 2013, "NA", "NA")))
+colnames(filler)<-colnames(Time.Nar.samp)
+Total<-rbind(Time.Nar.samp, Time.Nar.host, Time.WPP.samp, Time.WPP.host)
+Total$Year<-as.numeric(as.character(Total$Year))
+Total<-as.data.frame(cbind(as.character(Total$Haplotype), Total$Year, as.character(Total$Location)))
+Total<-as.data.frame(table(Total))
+colnames(Total)<-c("Haplotype", "Year", "Location", "Freq")
+
+
+Time.WPP.samp<-Total[which(Total$Location== "Nar.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+Time.WPP.samp$Haplotype<-factor(Time.WPP.samp$Haplotype, levels = rev(c("DFT1_0", "DFT1_1", "DFT1_2", 
+                                                                          "DFT1_2A", "DFT1_2B1", "DFT1_4A1a", "DFT1_5",
+                                                                          "DFT1_5B1", 
+                                                                          "DFT1_17", "DFT1_18")))
+
+
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp$Haplogroup)),]
+
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2", "DFT1_4")) 
+
+Nar.tums<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = factor(Haplogroup)))+
+  geom_bar(stat = "identity")+
+  scale_x_continuous(limits = c(2003, 2016), breaks = seq(2003, 2016 , 1))+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("#315195", "#DC734F", "#E0C607")))+
+  xlab("")+
+  ylab("No. of Tumors")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Tumor Haplogroups in Narwantapu Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(margin = margin(l =-1.5), size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="WPP.tumor"),][grep("DFT", Total$Haplogroup),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp$Haplogroup)),]
+Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Freq==0),]
+#Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp$Haplotype<-factor(Time.WPP.samp$Haplotype, levels = rev(c("DFT1_0", "DFT1_1", "DFT1_2", 
+                                                                          "DFT1_2A", "DFT1_2B1", "DFT1_4A1a", "DFT1_5",
+                                                                          "DFT1_5B1", 
+                                                                          "DFT1_17", "DFT1_18")))
+
+Time.WPP.samp$Haplogroup<-factor(Time.WPP.samp$Haplogroup, levels = rev(c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_6",
+                                                                          "DFT1_17", "DFT1_18")))
+
+
+WPP.tums<-ggplot(Time.WPP.samp, aes(as.numeric(as.character(Year)), Freq, fill = Haplogroup))+
+  geom_bar(stat = "identity")+
+  theme_bw() + 
+  scale_x_continuous(limits = c(2003, 2016), breaks = seq(2003, 2016 , 1))+
+  scale_fill_manual(values = rev(c("grey", "#DC734F", "#A5153E", "#8A3CD5", "#A3CB70")))+
+  xlab("")+
+  ylab("No. of Tumors")+
+  labs(fill = "Tumor Haplogroup")+
+  ggtitle("Tumor Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(margin = margin(l =-1.5), size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="WPP.host"),][grep("TD", Total$Haplotype),]
+#Time.WPP.samp<-Time.WPP.samp[-which(Time.WPP.samp$Year=="NA"),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp$Haplotype<-factor(Time.WPP.samp$Haplotype, levels = rev(c("TD_0", "TD_01A1a1", 
+                                                                      "TD_01A1a2", "TD_01A1a3A1", 
+                                                                      "TD_01A1a3A1b", "TD_01A1a3A1i", 
+                                                                      "TD_01A2", "TD_01A2a1A1a2",
+                                                                      "TD_01A3a1A2a", "TD_01A3a1A2a5",
+                                                                      "TD_01A3a4", "TD_03", "TD_05")))
+
+WPP.hosts<-ggplot(Time.WPP.samp, aes(Year, Freq, fill = factor(Haplotype)))+
+  geom_bar(stat = "identity")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey",  "green", "#003300", "#006600", "#009900", "#00CC00", "#59C248", "#2AC7A8", "#9CE590", "#A7C4A6", "#8BB889", "#6648C2", "#C2A348")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Devil Haplogroup")+
+  ggtitle("Devil Haplogroups in WPP Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(margin = margin(l =-1.5), size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+Time.WPP.samp<-Total[which(Total$Location=="Nar.host"),][grep("TD", Total$Haplotype),]
+Time.WPP.samp<-Time.WPP.samp[-which(is.na(Time.WPP.samp)),]
+Time.WPP.samp$Haplotype<-factor(Time.WPP.samp$Haplotype, levels = rev(c("TD_0", "TD_01A1a1", 
+                                                                      "TD_01A1a2", "TD_01A1a3A1", 
+                                                                      "TD_01A1a3A1b", "TD_01A1a3A1i", 
+                                                                      "TD_01A2", "TD_01A2a1A1a2",
+                                                                      "TD_01A3a1A2a", "TD_01A3a1A2a5",
+                                                                      "TD_01A3a4", "TD_03", "TD_05")))
+
+Nar.hosts<-ggplot(Time.WPP.samp, aes(Year, Freq, fill = factor(Haplotype)))+
+  geom_bar(stat = "identity")+
+  theme_bw() + 
+  scale_fill_manual(values = rev(c("grey",  "green", "#003300", "#006600", "#009900", "#00CC00", "#59C248", "#2AC7A8", "#9CE590", "#A7C4A6", "#8BB889", "#6648C2", "#C2A348")))+
+  xlab("")+
+  ylab("No. of Devils")+
+  labs(fill = "Devil Haplogroup")+
+  ggtitle("Devil Haplogroups in Narawntapu Across Time")+
+  #scale_x_discrete(limits = c("DFT1_0", "DFT1_2", "DFT1_5", "DFT1_17", "DFT1_18"))+
+  scale_y_continuous(expand = c(0,0)) +
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(margin = margin(l =-1.5), size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) 
+
+
+
+pdf("graph.tumor.pdf", 18,12)
+grid.arrange(WPP.tums, WPP.hosts, Nar.tums, Nar.hosts, ncol = 2)
+dev.off()
+
+
+```
+
+
+```{r Tumors with more than one tumor}
+
+rodrigo<-read.xlsx("~/Desktop/2016-06-29_WPP_data_Rodrigo.xlsx", 1)
+hosts.more.than.one<-rodrigo[which(duplicated(rodrigo$NA.) | duplicated(rodrigo$NA., fromLast=T)),]
+
+pdf("More than one tumor.pdf", 8,5)
+ggplot(hosts.more.than.one, aes(hosts.more.than.one$Name, fill = Haplogroup))+geom_bar()+
+   theme_bw() + scale_fill_manual(values = c("grey", "#F1C33B", "#C7362A"))+labs(x = "", y = "Number of Tumors")+
+  theme(axis.line = element_line(colour = "black"),
+        #legend.position="none",
+    text=element_text(size =15, colour = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1.2, size = 18),
+    axis.text.y = element_text(size = 18),
+    axis.title.y = element_text(vjust = 1.1, size = 20),
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+dev.off()
+
+```
+
+
+```{r}
+# Number of bp over time:
+
+years<-Time.WPP.samp[,2:3]
+years$bp<-str_split_fixed(as.character(years$Haplotype),"_", 2)[,2]
+years$bp<-nchar(years$bp)
+years$bp[which(years$Haplotype=="DFT1_0")]<-0
+
+uniq.years<-unique(years)
+sum.sampls<-aggregate(.~Year, data = uniq.years[,c(1,3)], FUN=sum)
+
+sum.years<-count(years[,1])
+
+
+
+samp.data<-read.xlsx2("~/Desktop/Devil sample database_update_27_4_17.xlsx", 1)
+Time.WPP.host$TCG_ID<-str_split_fixed(Time.WPP.host$TCG_ID, "H", 2)[,1]
+
+Time.WPP.host$Age<-samp.data$Age.at.time.of.sampling[which(samp.data$TCG_ID %in% Time.WPP.host$TCG_ID)]
+
+
+```
+
+
+
+
