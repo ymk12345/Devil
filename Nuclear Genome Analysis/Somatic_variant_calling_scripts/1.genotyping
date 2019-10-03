@@ -6,6 +6,7 @@ OUTDIR=$1
 REFERENCE=$2
 BAMLIST=$3
         
+	
 while read FILE; do 
             NAME=`basename $FILE`
 	   if [ -f "$OUTDIR/1_individual_calls/platypusVariants_"${NAME%.*}"_default.vcf" ]; then 
