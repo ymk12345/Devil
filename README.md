@@ -13,7 +13,7 @@ In the Mitochondrial Analysis folder
 
 In the Nuclear Analysis folder
 5) Calling and filtering of variants from the nuclear genome
-6) Calling copy numbers on low-coverage samples 
+6) Calling copy numbers on low-coverage samples
 7) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants
 8) QC and filtering the initial 600 probe panel (MIPs)
 9) Filtering of MIPs (post-QC) and overlapping with copy number states
