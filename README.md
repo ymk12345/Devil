@@ -16,11 +16,9 @@ In the Nuclear Genome Analysis folder
 
 6) Calling and filtering of variants from the nuclear genome--added but will need to join into single variant calling pipeline script
 7) Calling copy numbers on low-coverage samples
-8) MIPs: calling; 1st QC.
-9) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants 
-10) QC and filtering the initial 600 probe panel (MIPs)
-11) Filtering of MIPs (post-QC) and overlapping with copy number states
-12) Generating Phylogeny using MIPs
-13) Telomere analysis
-
-14) Plotting spread of different groups across Tasmania
+8) Generating Phylogeny using SNVs from the Nuclear Genome + somatic mitochondrial variants 
+9) QC and filtering the initial 600 probe panel (MIPs)
+10) Filtering of MIPs (post-QC) and overlapping with copy number states
+11) Generating Phylogeny using MIPs
+12) Telomere analysis
+13) Plotting spread of different groups across Tasmania
