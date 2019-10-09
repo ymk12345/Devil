@@ -86,15 +86,15 @@ cf > $OUTDIR/"${NAME%.*}"_regions_${GTP}.txt
     		--refFile=$REFERENCE \
         	--bamFiles=$BAMLIST \
         	--minReads=1 \
-			--minFlank=0 \
-			--minBaseQual=30 \
+		--minFlank=0 \
+		--minBaseQual=30 \
       		--filteredReadsFrac=.8 \
-			--badReadsThreshold=30 \
+		--badReadsThreshold=30 \
 	    	--badReadsWindow=15 \
         	--minPosterior=0 \
 	    	--getVariantsFromBAMs=0 \
 	    	--bufferSize=50000 \
-			--regions=$OUTDIR/"${NAME%.*}"_regions_${GTP}_merged.txt \
+		--regions=$OUTDIR/"${NAME%.*}"_regions_${GTP}_merged.txt \
 	    	--source=$OUTDIR/"${NAME%.*}"_coords_${GTP}.vcf.gz \
         	--nCPU=1 \
         	-o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
