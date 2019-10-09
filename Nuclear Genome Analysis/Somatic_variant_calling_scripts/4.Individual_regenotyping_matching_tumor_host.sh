@@ -50,18 +50,18 @@ while read NAME; do
 				# Call Using Platypus (don't use regions here, actually takes longer)		
 		    			Platypus.py callVariants \
             					--logFileName=$OUTDIR/"${NAME%.*}"_default.log \
-           			 			--refFile=$REFERENCE \
-          		  				--bamFiles=$OUTDIR/4_Tumor_Host_Filtering/bamlist.txt \
+           			 		--refFile=$REFERENCE \
+          		  			--bamFiles=$OUTDIR/4_Tumor_Host_Filtering/bamlist.txt \
             					--minReads=1 \
-	   							--minFlank=0 \
-	    						--minBaseQual=30 \
+	   					--minFlank=0 \
+	    					--minBaseQual=30 \
             					--filteredReadsFrac=.8 \
 		            			--badReadsThreshold=30 \
     		        			--badReadsWindow=15 \
-   			         			--minPosterior=0 \
-	   			 				--getVariantsFromBAMs=0 \
-	   			 				--source=$OUTDIR/4_Tumor_Host_Filtering/${NAME%.*}_to.genotype.vcf.gz \
-         			   			--nCPU=8 \
+   			         		--minPosterior=0 \
+	   			 		--getVariantsFromBAMs=0 \
+	   			 		--source=$OUTDIR/4_Tumor_Host_Filtering/${NAME%.*}_to.genotype.vcf.gz \
+         			   		--nCPU=8 \
             					-o $OUTDIR/4_Tumor_Host_Filtering/"${NAME%.*}"_genotyped.vcf
 
 
