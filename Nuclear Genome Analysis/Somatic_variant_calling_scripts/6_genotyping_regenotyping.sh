@@ -10,22 +10,22 @@ OUTDIR=$5 # This is the directory of 6_genotyping
 	GTP=1
 
  	Platypus.py callVariants \
-	    --logFileName="${NAME%.*}"_genotyped_${GTP}_default.log \
-    	--refFile=$REFERENCE \
-        --bamFiles=$BAMLIST \
-        --minReads=1 \
+		--logFileName="${NAME%.*}"_genotyped_${GTP}_default.log \
+		--refFile=$REFERENCE \
+		--bamFiles=$BAMLIST \
+		--minReads=1 \
 		--minFlank=0 \
 		--minBaseQual=30 \
-      	--filteredReadsFrac=.8 \
+      		--filteredReadsFrac=.8 \
 		--badReadsThreshold=30 \
-	    --badReadsWindow=15 \
-        --minPosterior=0 \
-	    --getVariantsFromBAMs=0 \
-	    --bufferSize=500 \
+	    	--badReadsWindow=15 \
+        	--minPosterior=0 \
+	    	--getVariantsFromBAMs=0 \
+	    	--bufferSize=500 \
 		--regions=$REGIONS \
-	    --source=$VCF \
-        --nCPU=1 \
-        -o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
+	    	--source=$VCF \
+        	--nCPU=1 \
+        	-o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
 
 	bgzip -d $VAR
 	cut -f1-5 $VAR > $OUTDIR/"${NAME%.*}"_merged_pos.txt
@@ -73,15 +73,15 @@ OUTDIR=$5 # This is the directory of 6_genotyping
     		--refFile=$REFERENCE \
         	--bamFiles=$BAMLIST \
         	--minReads=1 \
-			--minFlank=0 \
-			--minBaseQual=30 \
+		--minFlank=0 \
+		--minBaseQual=30 \
       		--filteredReadsFrac=.8 \
-			--badReadsThreshold=30 \
+		--badReadsThreshold=30 \
 	    	--badReadsWindow=15 \
         	--minPosterior=0 \
 	    	--getVariantsFromBAMs=0 \
 	    	--bufferSize=500 \
-			--regions=$OUTDIR/"${NAME%.*}"_regions_${GTP}_merged.txt \
+		--regions=$OUTDIR/"${NAME%.*}"_regions_${GTP}_merged.txt \
 	    	--source=$OUTDIR/"${NAME%.*}"_coords.vcf.gz \
         	--nCPU=1 \
         	-o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
