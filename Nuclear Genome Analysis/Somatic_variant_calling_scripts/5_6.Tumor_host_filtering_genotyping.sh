@@ -37,20 +37,20 @@ OUTDIR=$2
 		
 		
 		# Genotyping Across All Tumors:
-					 Platypus.py callVariants \
-		        		        --logFileName=$OUTDIR/"${NAME%.*}"_default.log \
-    		                    --refFile=$REFERENCE \
-         		                --bamFiles=$OUTDIR/4_Tumor_Host_Filtering/bamlist.txt \
-                        		--minReads=1 \
-		                      	--minFlank=0 \
-		                        --minBaseQual=30 \
-      			                --filteredReadsFrac=.8 \
-		                        --badReadsThreshold=30 \
-	                            --badReadsWindow=15 \
+			Platypus.py callVariants \
+		        	--logFileName=$OUTDIR/"${NAME%.*}"_default.log \
+    		                --refFile=$REFERENCE \
+         		        --bamFiles=$OUTDIR/4_Tumor_Host_Filtering/bamlist.txt \
+                        	--minReads=1 \
+		                --minFlank=0 \
+		                --minBaseQual=30 \
+      			        --filteredReadsFrac=.8 \
+		                --badReadsThreshold=30 \
+	                        --badReadsWindow=15 \
                                 --minPosterior=0 \
-	                            --getVariantsFromBAMs=0 \
-								--regions=$OUTDIR/4_Tumor_Host_Filtering/${NAME%.*}_varRegions_snvs.txt \
-	                            --source=$OUTDIR/5.Prep.Genotyping/final.genotypinglist.sorted.vcf.gz \
+	                        --getVariantsFromBAMs=0 \
+				--regions=$OUTDIR/4_Tumor_Host_Filtering/${NAME%.*}_varRegions_snvs.txt \
+	                        --source=$OUTDIR/5.Prep.Genotyping/final.genotypinglist.sorted.vcf.gz \
                                 --nCPU=8 \
                                 -o $OUTDIR/4_Tumor_Host_Filtering/"${NAME%.*}"_genotyped4.vcf
 
