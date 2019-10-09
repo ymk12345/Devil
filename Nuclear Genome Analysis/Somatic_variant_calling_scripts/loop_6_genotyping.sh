@@ -19,21 +19,21 @@ while read -r VCF REGIONS; do
 
  	Platypus.py callVariants \
 		--logFileName="${NAME%.*}"_genotyped_${GTP}_default.log \
-    	--refFile=$REFERENCE \
-        --bamFiles=$BAMLIST \
-        --minReads=1 \
+    		--refFile=$REFERENCE \
+        	--bamFiles=$BAMLIST \
+        	--minReads=1 \
 		--minFlank=0 \
 		--minBaseQual=30 \
-      	--filteredReadsFrac=.8 \
+      		--filteredReadsFrac=.8 \
 		--badReadsThreshold=30 \
 		--badReadsWindow=15 \
-    	--minPosterior=0 \
+    		--minPosterior=0 \
 		--getVariantsFromBAMs=0 \
 		--bufferSize=50000 \
 		--regions=$REGIONS \
 		--source=$VCF.gz \
-        --nCPU=1 \
-        -o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
+        	--nCPU=1 \
+        	-o $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf
 
 	vcfbreakmulti $OUTDIR/"${NAME%.*}"_genotyped_${GTP}.vcf >$OUTDIR/"${NAME%.*}"_default.multiallelic.vcf
 
