@@ -1,55 +1,54 @@
 
-# 1. Import Data 
+# 1. Import and Load Relevant Data 
 
-  # i) Metadata
+  # a) Metadata
     load("~/Desktop/Devil/drive-download-20190919T030557Z-001/manifest_total_2_10_18.RData")
   
-  # ii) Allele Count Data
+  # b) Allele Count Data
     load("~/Desktop/Devil/drive-download-20190919T030557Z-001/allele.counter.data.updated.final.3.12.18.RData")
     load("~/Desktop/Devil/allele.counter.data.comb_2_10_18.RData")
   
-  # iii) Probe Metadata
+  # c) Probe Metadata
     load("~/Desktop/Devil/mips_rebalanced_vep.RData")
     
-  # iv) Haplotype Database
+  # d) Haplotype Database
     load("haplos.RData")
 
-  # v) Load Library
+  # e) Libraries
     library(stringr)
     library(data.table)
     library(reshape2)
 
     
 # 2. Transform Allele Count Data    
-    allele.counter.data.comb$TAG.INDEX<-str_split_fixed(allele.counter.data.comb$Sample, "#", 2)[,2]
-    allele.counter.data.comb$TAG.INDEX<-str_split_fixed(allele.counter.data.comb$TAG.INDEX, "[.]", 2)[,1]
-   
-    allele.counter.data.comb$seq_run<-str_split_fixed(allele.counter.data.comb$Sample, "#", 2)[,1]
-    allele.counter.data.comb$seq_run<-str_split_fixed(allele.counter.data.comb$seq_run, "_", 2)[,1]
+    allele.counter.data.comb$TAG.INDEX<-str_split_fixed(str_split_fixed(allele.counter.data.comb$Sample, "#", 2)[,2],  "[.]", 2)[,1]
+    allele.counter.data.comb$seq_run<-str_split_fixed(str_split_fixed(allele.counter.data.comb$Sample, "#", 2)[,1], "_", 2)[,1]
 
 
     
-# 3a. Merge Allele Count and Manifest Metadata   
-    allele.counter.data.comb1<-merge(allele.counter.data.comb, manifest_total_2_10_18)
-    colnames(allele.counter.data.comb1)[7]<-"ALT"
+# 3 Merge Allele Count and Manifest Metadata   
+    #a. Merge Old Allele Count Data with Sample and MIPs Metadata
+      # i) Sample Manifests
+      allele.counter.data.comb1<-merge(allele.counter.data.comb, manifest_total_2_10_18)
+      colnames(allele.counter.data.comb1)[7]<-"ALT"
+
+      # ii). Merge Allele Count with MIPs
+      allele.counter.data.comb1<-merge(allele.counter.data.comb1, mips_rebalanced_vep)
+      allele.counter.data.comb1$Sample.TCG_ID<-gsub("[-]Devil", "", allele.counter.data.comb1$TCG_ID)
+      allele.counter.data.comb1$TCG_ID<-gsub("[-]Devil", "", allele.counter.data.comb1$TCG_ID)
 
 
-# 3b. Merge Allele Count with MIPs
-    allele.counter.data.comb1<-merge(allele.counter.data.comb1, mips_rebalanced_vep)
-    allele.counter.data.comb1$Sample.TCG_ID<-gsub("[-]Devil", "", allele.counter.data.comb1$TCG_ID)
-    allele.counter.data.comb1$TCG_ID<-gsub("[-]Devil", "", allele.counter.data.comb1$TCG_ID)
+    #b. Merge New Allele Count with Manifests; reformat so the tables are the same.
+      allele.counter.data.updated1<-allele.counter.data.updated1[,-c(31:32)]
+      mip.ac.rebalanced1<-merge(allele.counter.data.updated1, mips_rebalanced_vep)
+      mip.ac.rebalanced1$Sample.TCG_ID<-mip.ac.rebalanced1$Supplier.name
+      mip.ac.rebalanced1$TCG_ID<-gsub("[-]Devil", "", mip.ac.rebalanced1$Sample.TCG_ID)
+      mip.ac.rebalanced1$Sample.TCG_ID<-gsub("[-]Devil", "", mip.ac.rebalanced1$Sample.TCG_ID)
+      mip.ac.rebalanced1$INTERMEDIATE.PLATE.ID<-""
 
     
-
-# 4. Merge Old Allele Count and New Allele Count Data
-    allele.counter.data.updated1<-allele.counter.data.updated1[,-c(31:32)]
-    mip.ac.rebalanced1<-merge(allele.counter.data.updated1, mips_rebalanced_vep)
-    mip.ac.rebalanced1$Sample.TCG_ID<-mip.ac.rebalanced1$Supplier.name
-    mip.ac.rebalanced1$TCG_ID<-gsub("[-]Devil", "", mip.ac.rebalanced1$Sample.TCG_ID)
-    mip.ac.rebalanced1$Sample.TCG_ID<-gsub("[-]Devil", "", mip.ac.rebalanced1$Sample.TCG_ID)
-    mip.ac.rebalanced1$INTERMEDIATE.PLATE.ID<-""
-
-
+      
+# 5. Merge Old and New Allele Count Data; and reformat table so it's compatible with the haplotype data table
     allele.counter.data.comb1<-rbind(allele.counter.data.comb1[,which(colnames(allele.counter.data.comb1) %in% colnames(mip.ac.rebalanced1))], 
                                  mip.ac.rebalanced1[,which(colnames(mip.ac.rebalanced1) %in% colnames(allele.counter.data.comb1))])
 
@@ -60,12 +59,14 @@
     allele.counter.data.comb1$id<-allele.counter.data.comb1$TCG_ID
     
     
-# 5.  Merge Allele Count Data and Haplotype
+    
+# 6.  Merge Allele Count Data and Haplotype
     allele.counter.data.comb1<-cbind(allele.counter.data.comb1, 
                                      haplos[match(allele.counter.data.comb1$Sample.TCG_ID, haplos$Sample.TCG_ID),])
     
     
-# 6. Check Samples    
+    
+# 7. Check Samples for Quality Check    
     for(x in unique(allele.counter.data.comb1$seq_run)){
   pdf(paste0(x, "ac_check_hist.pdf"), height = 8, width = 20)
   #par(mfrow=c(2,1))
@@ -102,83 +103,85 @@
 
 
 
-# 7. Combine Allele Count of Samples which were regenotyped
-    # Generate Data Frame of Samples and Sequencing Runs
-    samples.to.combine<-data.frame(samp=
-                                 unique(paste0(allele.counter.data.comb1$Sample.TCG_ID, "_", allele.counter.data.comb1$seq_run)))
+    
+# 8. Combine Read Data for Samples that where libraries were recreated
+    #a. Isolate Duplicate Samples from Sequencing Runs
+      samples.to.combine<-data.frame(samp=unique(paste0(allele.counter.data.comb1$Sample.TCG_ID, "_", allele.counter.data.comb1$seq_run)))
+      samples.to.combine$Sample.TCG_ID<-gsub("-Devil", "", str_split_fixed(samples.to.combine$samp, "_", 2)[,1])
+      samples.to.combine<-samples.to.combine$Sample.TCG_ID[which(duplicated(samples.to.combine$Sample.TCG_ID))]
+      samples.to.combine<-samples.to.combine[grep("T|H", samples.to.combine)]
 
-    samples.to.combine$Sample.TCG_ID<-str_split_fixed(samples.to.combine$samp, "_", 2)[,1]
-    samples.to.combine$Sample.TCG_ID<-gsub("-Devil", "", samples.to.combine$Sample.TCG_ID)
-    samples.to.combine<-samples.to.combine$Sample.TCG_ID[which(duplicated(samples.to.combine$Sample.TCG_ID))]
-    samples.to.combine<-samples.to.combine[grep("T|H", samples.to.combine)]
 
-    allele.counter.data.comb1$Sample.TCG_ID<-gsub("-Devil", "", allele.counter.data.comb1$Sample.TCG_ID)
+    #b. Find Samples in Multiple Sequencing Run; Merge Data for Duplicated Samples
+      allele.counter.data.comb1$Sample.TCG_ID<-gsub("-Devil", "", allele.counter.data.comb1$Sample.TCG_ID)
+      duplicated.samples1<-allele.counter.data.comb1[which(allele.counter.data.comb1$Sample.TCG_ID %in% samples.to.combine),]
+      duplicated.samples1.combined<-NULL
+      for(y in samples.to.combine){
+        temp.dup<-allele.counter.data.comb1[which(allele.counter.data.comb1$Sample.TCG_ID %in% y),]
+        temp<-temp.dup
+        t.val<-aggregate(temp[,c("value", "Depth")], by = list(temp$mip_name), FUN=sum)
+        temp.dup$value<-t.val$value[match(temp.dup$mip_name, t.val$Group.1)]
+        temp.dup$Depth<-t.val$Depth[match(temp.dup$mip_name, t.val$Group.1)]
+        
+        temp.dup$VAF<-temp.dup$value/temp.dup$Depth
+        temp.dup$Fraction<-paste0("'", temp.dup$value, "/", temp.dup$Depth)
+        #temp.dup$PLATE_ID<-paste(unique(temp.dup$PLATE_ID), collapse = "_")
+        temp.dup$seq_run<-paste(unique(temp.dup$seq_run), collapse = "_")
+        temp.dup$INTERMEDIATE.PLATE.ID<-paste(unique(temp.dup$INTERMEDIATE.PLATE.ID), collapse = "_")
+        
+        temp.dup<-unique(temp.dup)
+        duplicated.samples1.combined<-rbind(duplicated.samples1.combined, temp.dup)
+        
+      }
+      duplicated.samples1.combined<-unique(duplicated.samples1.combined)
 
-    # Find Samples in Multiple Sequencing Run; Merge Data for Duplicated Samples
-    duplicated.samples1<-allele.counter.data.comb1[which(allele.counter.data.comb1$Sample.TCG_ID %in% samples.to.combine),]
-    duplicated.samples1.combined<-NULL
-    for(y in samples.to.combine){
-      temp.dup<-allele.counter.data.comb1[which(allele.counter.data.comb1$Sample.TCG_ID %in% y),]
-      temp<-temp.dup
-      t.val<-aggregate(temp[,c("value", "Depth")], by = list(temp$mip_name), FUN=sum)
-      temp.dup$value<-t.val$value[match(temp.dup$mip_name, t.val$Group.1)]
-      temp.dup$Depth<-t.val$Depth[match(temp.dup$mip_name, t.val$Group.1)]
       
-      temp.dup$VAF<-temp.dup$value/temp.dup$Depth
-      temp.dup$Fraction<-paste0("'", temp.dup$value, "/", temp.dup$Depth)
-      #temp.dup$PLATE_ID<-paste(unique(temp.dup$PLATE_ID), collapse = "_")
-      temp.dup$seq_run<-paste(unique(temp.dup$seq_run), collapse = "_")
-      temp.dup$INTERMEDIATE.PLATE.ID<-paste(unique(temp.dup$INTERMEDIATE.PLATE.ID), collapse = "_")
+    #c. Merge Samples Genotyped in Single and Multiple Runs
+      allele.counter.data.comb1<-allele.counter.data.comb1[-which(allele.counter.data.comb1$Sample.TCG_ID %in% samples.to.combine),]
+      mip.ac.rebalanced.d1.comb<-rbind(allele.counter.data.comb1, duplicated.samples1.combined)
+
       
-      temp.dup<-unique(temp.dup)
-      duplicated.samples1.combined<-rbind(duplicated.samples1.combined, temp.dup)
+    #d. Add Clade and Group Info to Allele Count
+      mip.ac.rebalanced.d1.comb$Clade<-haplos$Clade[match(mip.ac.rebalanced.d1.comb$Sample.TCG_ID, haplos$Sample.TCG_ID)]
+      mip.ac.rebalanced.d1.comb$Groups<-haplos$Groups[match(mip.ac.rebalanced.d1.comb$Sample.TCG_ID, haplos$Sample.TCG_ID)]
+      mip.ac.rebalanced.d1.comb<-mip.ac.rebalanced.d1.comb[grep("T", mip.ac.rebalanced.d1.comb$Sample.TCG_ID),]
+  
+    
+    #e. Reformat Allele Count Data and Calculate VAF
+      mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.comb
+      mip.ac.rebalanced.d1.only$mip_name_group<-unlist(stringr::str_extract_all(mip.ac.rebalanced.d1.comb$mip_name, "\\([^()]+\\)"))
+      mip.ac.rebalanced.d1.only$Unique_IDs<-paste0(mip.ac.rebalanced.d1.only$TCG_ID, ":",
+                                                   mip.ac.rebalanced.d1.only$PLATE_ID)
+      mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.only[order(mip.ac.rebalanced.d1.only$TCG_ID),]
+      mip.ac.rebalanced.d1.only$MIP_fraction<-with(mip.ac.rebalanced.d1.only, 
+                                                   paste0("'", value, "/", Depth))
       
-    }
-    duplicated.samples1.combined<-unique(duplicated.samples1.combined)
-
-    # Merge Samples Genotyped in Single and Multiple Runs
-    allele.counter.data.comb1<-allele.counter.data.comb1[-which(allele.counter.data.comb1$Sample.TCG_ID %in% samples.to.combine),]
-    mip.ac.rebalanced.d1.comb<-rbind(allele.counter.data.comb1, duplicated.samples1.combined)
-
-    # Add Clade and Group Info to Allele Count
-    mip.ac.rebalanced.d1.comb$Clade<-haplos$Clade[match(mip.ac.rebalanced.d1.comb$Sample.TCG_ID, haplos$Sample.TCG_ID)]
-    mip.ac.rebalanced.d1.comb$Groups<-haplos$Groups[match(mip.ac.rebalanced.d1.comb$Sample.TCG_ID, haplos$Sample.TCG_ID)]
-    mip.ac.rebalanced.d1.comb<-mip.ac.rebalanced.d1.comb[grep("T", mip.ac.rebalanced.d1.comb$Sample.TCG_ID),]
-
-    
-    # Reformat Allele Count Data and Calculate VAF
-    mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.comb
-    mip.ac.rebalanced.d1.only$mip_name_group<-unlist(stringr::str_extract_all(mip.ac.rebalanced.d1.comb$mip_name, "\\([^()]+\\)"))
-    mip.ac.rebalanced.d1.only$Unique_IDs<-paste0(mip.ac.rebalanced.d1.only$TCG_ID, ":",
-                                                 mip.ac.rebalanced.d1.only$PLATE_ID)
-    mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.only[order(mip.ac.rebalanced.d1.only$TCG_ID),]
-    mip.ac.rebalanced.d1.only$MIP_fraction<-with(mip.ac.rebalanced.d1.only, 
-                                                 paste0("'", value, "/", Depth))
-    
-    mip.ac.rebalanced.d1.only$VAF<-as.numeric(mip.ac.rebalanced.d1.only$value)/as.numeric(mip.ac.rebalanced.d1.only$Depth)
+      mip.ac.rebalanced.d1.only$VAF<-as.numeric(mip.ac.rebalanced.d1.only$value)/as.numeric(mip.ac.rebalanced.d1.only$Depth)
 
     
     
-# 8. Calculate Average VAF
+# 9. Calculate Average VAF
     setDT(mip.ac.rebalanced.d1.only)[, Mode_VAF:= Mode(VAF, 0.001), by=Sample.TCG_ID][]
     setDT(mip.ac.rebalanced.d1.only)[, Median_VAF:= median(VAF[which(VAF>0.001)]), by=Sample.TCG_ID][]
 
   
   
-# 9. Remove Empty Samples and Only Select Tumors
+# 10. Remove Empty Samples and Only Select Tumors
     mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.only[which(mip.ac.rebalanced.d1.only$Sample.TCG_ID!="BLANK"),]
     mip.ac.rebalanced.d1.only<-mip.ac.rebalanced.d1.only[grep("T", mip.ac.rebalanced.d1.only$Sample.TCG_ID),]
     mip.ac.rebalanced.d1.only$Clade<-haplos$Clade[match(mip.ac.rebalanced.d1.only$Sample.TCG_ID, haplos$Sample.TCG_ID)]
 
   
-# 10. Generate MIPS Table
+    
+# 11. Generate MIPS Table
     mip.ac.rebalanced.d1.only.reshaped<-dcast(unique(mip.ac.rebalanced.d1.only[,c("mip_name", "Sample.TCG_ID", "Clade",
                                                                                 "Mode_VAF", "Median_VAF", "MIP_fraction")]),
                                             Sample.TCG_ID  + Mode_VAF + Median_VAF+Clade  ~ mip_name, value.var = "MIP_fraction" )
     mip.ac.rebalanced.d1.only.reshaped<-t(mip.ac.rebalanced.d1.only.reshaped)
 
 
-# 11. Identify Allele Count of MIPS that do not support the Sample Group
+    
+# 12. Identify Allele Count of MIPS that do not support the Sample Group
     tumors.unique<-unique(haplos$Sample.TCG_ID)
     only.unsupporting.vars<-NULL
     for(y in tumors.unique){
@@ -204,7 +207,7 @@
 
 
 
-# 12. Reformat Data
+# 13. Reformat Data for Power Analysis
     mip.ac.rebalanced.d1.comb$id<-with(mip.ac.rebalanced.d1.comb, paste0(Sample.TCG_ID))
     mip.ac.rebalanced.tumors.only<-mip.ac.rebalanced.d1.only
     mip.ac.rebalanced.tumors.only$TCG_ID<-mip.ac.rebalanced.tumors.only$Sample.TCG_ID
@@ -216,7 +219,7 @@
     mip.ac.rebalanced.d1.comb$VAF<-mip.ac.rebalanced.d1.comb$value/mip.ac.rebalanced.d1.comb$Depth
 
 
-# 13. Power Analysis and Contamination Calculation for Tumors
+# 14. Power Analysis and Contamination Calculation for Tumors
   pwr.tumors<-NULL
   for(y in unique(mip.ac.rebalanced.tumors.only$pseudoid)){
     
@@ -256,11 +259,10 @@
   supp.table1<-t(pwr.tumors[1:5,])
   pwr.tumors<-as.data.frame(pwr.tumors)
 
-  
   tumors_metadata<-as.data.frame(supp.table1)
 
 
-  # For each sample:
+  # Filter out contaminating variants (per sample):
   mip.ac.rebalanced.d1.comb$unique.ids<-with(mip.ac.rebalanced.d1.comb, paste0(Sample.TCG_ID))
   mip.ac.rebalanced.d1.only.reshaped<-as.data.frame(t(mip.ac.rebalanced.d1.only.reshaped))
 
@@ -271,108 +273,112 @@
   tumors_metadata<-tumors_metadata[grep("T", tumors_metadata$TCG_ID),]
   tumors_metadata<-unique(tumors_metadata)
   tumor_list<-tumors_metadata$TCG_ID
-  
   tumors_metadata$Read_threshold<-as.numeric(as.character(tumors_metadata$Read_threshold))
 
 
-for(u in 1:nrow(tumors_metadata)){
-  x_md<-tumors_metadata[u,]
-  x = as.character(x_md$TCG_ID[1])
-  
-  x.mips<-rep("N", nrow(mip.depth.pres.abs))
-  
-  # First step: identify those with expected reads > 10
-  reads<-NA
-  reads<-mip.ac.rebalanced.d1.only.reshaped[which(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID==x),4:ncol(mip.ac.rebalanced.d1.only.reshaped)]
-  
-  x_rd_depth<-as.numeric(stringr::str_split_fixed(unlist(reads), "[/]", 2)[,2])
-  x_rc<-as.numeric(gsub("'", "", stringr::str_split_fixed(unlist(reads), "[/]", 2)[,1]))
-  exp_reads<-x_rd_depth*as.numeric(as.character(x_md$Median_VAF[1]))*0.5
-  
-  
-  pab.index<-NA
-  pab.index<-which(exp_reads>=10 & x_rc>=as.numeric(as.character(x_md$Read_threshold[1])))
-  
-  x.mips[pab.index]<-mip.depth.pres.abs$ALT[pab.index]
-  
-  
-  
-  # Second step: identify number of reads >2 but less than the read_threshold and call them ambiguous
-  amb.index<-NA
-  amb.index<-which(x_rc>2 & x_rc<x_md$Read_threshold[1])
-  
-  x.mips[amb.index]<-"N"
-  
-  
-  # Third step: identify those that were called present, but with VAF<.01 # Use varying threshold
-  x_vaf<-x_rc/x_rd_depth
-  vaf.index<-which(x_vaf<.01 & exp_reads>=10 & x_rc>=as.numeric(as.character(x_md$Read_threshold[1])))
-  x.mips[vaf.index]<-"N"
-  
-  
-  # Third step: identify those absent if they have 0, 1, 2 reads
-  abs.index<-NA
-  abs.index<-which(x_rc <= 2 & exp_reads>=10)
-  
-  x.mips[abs.index]<-mip.depth.pres.abs$REF[abs.index]
-  
-  # Fourth step: expected reads ambiguous
-  abs.e.index<-NA
-  abs.e.index<-which(exp_reads<5)
-  
-  x.mips[abs.e.index]<-"N"
-  
-  # Fifth step: ambiguous
-  amb.e.index<-NA
-  amb.e.index<-which(exp_reads>=5 & exp_reads<10 & x_rc<x_md$Read_threshold[1])
-  
-  x.mips[amb.e.index]<-"N"
-  
-  # Sixth step: Present
-  p.e.index<-NA
-  p.e.index<-which(exp_reads>=5 & exp_reads<10 & x_rc>=x_md$Read_threshold[1])
-  
-  x.mips[p.e.index]<-mip.depth.pres.abs$ALT[p.e.index]  
-  
-  
-  # Place in order
-  mip.depth.pres.abs<-cbind(mip.depth.pres.abs, x.mips)
-  colnames(mip.depth.pres.abs)[ncol(mip.depth.pres.abs)]<-as.character(x)
-}
+  for(u in 1:nrow(tumors_metadata)){
+    x_md<-tumors_metadata[u,]
+    x = as.character(x_md$TCG_ID[1])
+    
+    x.mips<-rep("N", nrow(mip.depth.pres.abs))
+    
+    # First step: identify those with expected reads > 10
+    reads<-NA
+    reads<-mip.ac.rebalanced.d1.only.reshaped[which(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID==x),4:ncol(mip.ac.rebalanced.d1.only.reshaped)]
+    
+    x_rd_depth<-as.numeric(stringr::str_split_fixed(unlist(reads), "[/]", 2)[,2])
+    x_rc<-as.numeric(gsub("'", "", stringr::str_split_fixed(unlist(reads), "[/]", 2)[,1]))
+    exp_reads<-x_rd_depth*as.numeric(as.character(x_md$Median_VAF[1]))*0.5
+    
+    
+    pab.index<-NA
+    pab.index<-which(exp_reads>=10 & x_rc>=as.numeric(as.character(x_md$Read_threshold[1])))
+    
+    x.mips[pab.index]<-mip.depth.pres.abs$ALT[pab.index]
+    
+    
+    
+    # Second step: identify number of reads >2 but less than the read_threshold and call them ambiguous
+    amb.index<-NA
+    amb.index<-which(x_rc>2 & x_rc<x_md$Read_threshold[1])
+    
+    x.mips[amb.index]<-"N"
+    
+    
+    # Third step: identify those that were called present, but with VAF<.01 # Use varying threshold
+    x_vaf<-x_rc/x_rd_depth
+    vaf.index<-which(x_vaf<.01 & exp_reads>=10 & x_rc>=as.numeric(as.character(x_md$Read_threshold[1])))
+    x.mips[vaf.index]<-"N"
+    
+    
+    # Third step: identify those absent if they have 0, 1, 2 reads
+    abs.index<-NA
+    abs.index<-which(x_rc <= 2 & exp_reads>=10)
+    
+    x.mips[abs.index]<-mip.depth.pres.abs$REF[abs.index]
+    
+    # Fourth step: expected reads ambiguous
+    abs.e.index<-NA
+    abs.e.index<-which(exp_reads<5)
+    
+    x.mips[abs.e.index]<-"N"
+    
+    # Fifth step: ambiguous
+    amb.e.index<-NA
+    amb.e.index<-which(exp_reads>=5 & exp_reads<10 & x_rc<x_md$Read_threshold[1])
+    
+    x.mips[amb.e.index]<-"N"
+    
+    # Sixth step: Present
+    p.e.index<-NA
+    p.e.index<-which(exp_reads>=5 & exp_reads<10 & x_rc>=x_md$Read_threshold[1])
+    
+    x.mips[p.e.index]<-mip.depth.pres.abs$ALT[p.e.index]  
+    
+    
+    # Place in order
+    mip.depth.pres.abs<-cbind(mip.depth.pres.abs, x.mips)
+    colnames(mip.depth.pres.abs)[ncol(mip.depth.pres.abs)]<-as.character(x)
+  }
 
+  
+# 15. Calculate the number of variants that cannot be assigned (per sample)
+  mip.counts<-as.data.frame(apply(mip.depth.pres.abs[,4:ncol(mip.depth.pres.abs)], 2, 
+                                function(x){c(length(which(x=="A")), length(which(x=="C")), 
+                                              length(which(x=="T")), length(which(x=="G")),
+                                              length(which(x=="N")), (length(which(x=="N"))/552))}))
 
-mip.counts<-as.data.frame(apply(mip.depth.pres.abs[,4:ncol(mip.depth.pres.abs)], 2, function(x){c(length(which(x=="A")), length(which(x=="C")), 
-                                                                                                  length(which(x=="T")), length(which(x=="G")),
-                                                                                                  length(which(x=="N")), (length(which(x=="N"))/552))}))
-samp.to.remove<-which(mip.counts[6,] > .5)
-samp.to.remove.table<-tumors_metadata[which(mip.counts[6,] > .6),]
-samp.to.remove.table$TCG_ID<-rownames(supp.table1)[which(mip.counts[6,] > .5)]
+# 16. Remove all samples with greater than 50% missing data
+  samp.to.remove<-which(mip.counts[6,] > .5)
+  samp.to.remove.table<-tumors_metadata[which(mip.counts[6,] > .6),]
+  samp.to.remove.table$TCG_ID<-rownames(supp.table1)[which(mip.counts[6,] > .5)]
 
-supp.table1<-cbind(supp.table1[grep("T", rownames(supp.table1)),], t(mip.counts[6,]))
-colnames(supp.table1)[6]<-"N_prop"
-
-probes.to.remove<-apply(mip.depth.pres.abs[,-c(1:3, samp.to.remove+3)], 1, function(x){length(which(x=="N"))/(length(tumor_list))})
-
-probes.N.count<-data.frame(mip_name = mip.depth.pres.abs$mip_name,
+  supp.table1<-cbind(supp.table1[grep("T", rownames(supp.table1)),], t(mip.counts[6,]))
+  colnames(supp.table1)[6]<-"N_prop"
+  
+  
+# 17. Calculate the representation (missing fraction) per probe
+  probes.to.remove<-apply(mip.depth.pres.abs[,-c(1:3, samp.to.remove+3)], 1, function(x){length(which(x=="N"))/(length(tumor_list))})
+  probes.N.count<-data.frame(mip_name = mip.depth.pres.abs$mip_name,
                            N_prop = probes.to.remove)
+  
+# 18. Identify probes that have greater than 70% missing
+  probes.lowN<-probes.N.count$mip_name[which(probes.N.count$N_prop>.7)]
+  probes.lowN<-c(as.character(probes.lowN), host.probes)
 
+  
+# 19. Identify Manually  Germline mutations through the QC
+  host.probes<-c( "Chr5_supercontig_000000478:61461_(All_groups_ancestral)_0535",
+                  "Chr1_supercontig_000000015:1677191_(All_groups_excluding_377T1)_0004")
 
-host.probes<-c( "Chr5_supercontig_000000478:61461_(All_groups_ancestral)_0535",
-                "Chr1_supercontig_000000015:1677191_(All_groups_excluding_377T1)_0004")
+  
+# 20. Adding Mitochondria info to to the presence/absence table
+  MT_variants$mip_name<-with(MT_variants, paste0(POS, REF, ">", ALT))
+  MT_pres_abs<-matrix(nrow = nrow(MT_variants), ncol = ncol(mip.depth.pres.abs)-3)
+  MT_pres_abs<-cbind(MT_variants[,c("mip_name", "REF", "ALT")], MT_pres_abs)
+  colnames(MT_pres_abs)<-colnames(mip.depth.pres.abs)
 
-probes.lowN<-probes.N.count$mip_name[which(probes.N.count$N_prop>.7)]
-probes.lowN<-c(as.character(probes.lowN), host.probes)
-
-
-# Addding Mitochondria:
-MT_variants$mip_name<-with(MT_variants, paste0(POS, REF, ">", ALT))
-
-MT_pres_abs<-matrix(nrow = nrow(MT_variants), ncol = ncol(mip.depth.pres.abs)-3)
-MT_pres_abs<-cbind(MT_variants[,c("mip_name", "REF", "ALT")], MT_pres_abs)
-colnames(MT_pres_abs)<-colnames(mip.depth.pres.abs)
-
-
-for(z in 4:ncol(MT_pres_abs)){
+  for(z in 4:ncol(MT_pres_abs)){
   x = colnames(MT_pres_abs)[z]
   mt_samp<-NULL
   if(length(which(haplos$Sample.TCG_ID %in% x))>0){
@@ -388,290 +394,263 @@ for(z in 4:ncol(MT_pres_abs)){
 }
 
 
-# Now merge the two dataframes:
-
-p.a.tot<-rbind(mip.depth.pres.abs,MT_pres_abs)
-p.a.tot[,ncol(p.a.tot)]<-p.a.tot$REF
-colnames(p.a.tot)[ncol(p.a.tot)]<-"reference"
-p.a.tot1<-p.a.tot[,-c(samp.to.remove+3)]
-samp.to.remove<-colnames(p.a.tot)[c(samp.to.remove+3)]
-
-
-# Add 0 and 1 and NA for p.a.tot
-p.a.table<-t(apply(p.a.tot, 1, function(x){
-  idx<-which(as.character(x[4:length(x)])==x[2])+3
-  a.idx<-which(as.character(x[4:length(x)])==x[3])+3
-  x[idx]<-0
-  x[a.idx]<-1
+# 21. Merge the MIPS and Mitochondrial data tables:
+  p.a.tot<-rbind(mip.depth.pres.abs,MT_pres_abs)
+  p.a.tot[,ncol(p.a.tot)]<-p.a.tot$REF
+  colnames(p.a.tot)[ncol(p.a.tot)]<-"reference"
+  p.a.tot1<-p.a.tot[,-c(samp.to.remove+3)]
+  samp.to.remove<-colnames(p.a.tot)[c(samp.to.remove+3)]
   
-  return(x)
   
-}))
-
-
-p.a.tot_pres.abs<-rbind(p.a.table, haplos$Groups[match(colnames(p.a.table), haplos$Sample.TCG_ID)])
-p.a.tot_pres.abs<-rbind(p.a.tot_pres.abs, haplos$Complete.Haplotype[match(colnames(p.a.tot_pres.abs), haplos$Sample.TCG_ID)])
-p.a.tot_pres.abs<-rbind(p.a.tot_pres.abs, haplos$Clade[match(colnames(p.a.tot_pres.abs), haplos$Sample.TCG_ID)])
-p.a.tot_pres.abs<-p.a.tot_pres.abs[-1,]
-
-rownames(p.a.tot_pres.abs)[626:628]<-c("Group", "MT Haplogroup", "Clade")
-
-p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[626,4:ncol(p.a.tot_pres.abs)])+3)]
-p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[627,4:ncol(p.a.tot_pres.abs)])+3)]
-p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[628,4:ncol(p.a.tot_pres.abs)])+3)]
-
-p.a.tot_pres.abs<-p.a.tot_pres.abs[c(626:628, 1:625),]
-
-p.a.tot_pres.abs.meta<-p.a.tot_pres.abs[1:3,]
-p.a.tot_pres.abs.data<-p.a.tot_pres.abs[4:nrow(p.a.tot_pres.abs),]
-MT<-p.a.tot_pres.abs[-grep("Chr", p.a.tot_pres.abs[,1]),]
-
-p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[order(unlist(str_match_all(p.a.tot_pres.abs.data[,1], "(?<=\\().+?(?=\\))"))),]
-p.a.tot_pres.abs.data<-rbind(p.a.tot_pres.abs.meta, p.a.tot_pres.abs.data, MT[-c(1:3),])
-
-
-p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[2,4:ncol(p.a.tot_pres.abs.data)])+3)]
-p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[1,4:ncol(p.a.tot_pres.abs.data)])+3)]
-p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[3,4:ncol(p.a.tot_pres.abs.data)])+3)]
-
-
-filtered.table<-p.a.tot_pres.abs.data[-which(p.a.tot_pres.abs.data[,1] %in% probes.lowN), -which(colnames(p.a.tot_pres.abs.data) %in% samp.to.remove)]
-removed.table<-p.a.tot_pres.abs.data[c(1:3, which(p.a.tot_pres.abs.data[,1] %in% probes.lowN)), c(1:3, which(colnames(p.a.tot_pres.abs.data) %in% samp.to.remove))]
-
-probes.lowN.added<-apply(filtered.table[-c(1:3),4:ncol(filtered.table)], 1, function(x){
+# 22. Add 0 (sample carry ref only) and 1 (sample carries at least one alt allele) and NA (undetermined) to create a presence-absence table
+  p.a.table<-t(apply(p.a.tot, 1, function(x){
+    idx<-which(as.character(x[4:length(x)])==x[2])+3
+    a.idx<-which(as.character(x[4:length(x)])==x[3])+3
+    x[idx]<-0
+    x[a.idx]<-1
+    
+    return(x)
+    
+  }))
   
-  y<-length(which(x=="N"))/length(x)
-  return(y)
-})
-names(probes.lowN.added)<-filtered.table[-c(1:3),1]
-probes.lowN.added<-names(probes.lowN.added)[which(probes.lowN.added>.5)]
-
-probes.nopres<-apply(filtered.table[-c(1:3),4:ncol(filtered.table)], 1, function(x){
   
-  y<-length(which(x=="1"))/length(x)
-  return(y)
-})
-names(probes.nopres)<-filtered.table[-c(1:3),1]
-probes.nopres<-names(probes.nopres)[which(probes.nopres==0)]
+# 23. Reformat table to include haplogroup information as a Supplementary Table
+  p.a.tot_pres.abs<-rbind(p.a.table, haplos$Groups[match(colnames(p.a.table), haplos$Sample.TCG_ID)])
+  p.a.tot_pres.abs<-rbind(p.a.tot_pres.abs, haplos$Complete.Haplotype[match(colnames(p.a.tot_pres.abs), haplos$Sample.TCG_ID)])
+  p.a.tot_pres.abs<-rbind(p.a.tot_pres.abs, haplos$Clade[match(colnames(p.a.tot_pres.abs), haplos$Sample.TCG_ID)])
+  p.a.tot_pres.abs<-p.a.tot_pres.abs[-1,]
+  rownames(p.a.tot_pres.abs)[626:628]<-c("Group", "MT Haplogroup", "Clade")
 
-filtered.table.postfilter<-filtered.table[-which(filtered.table[,1] %in% c(probes.lowN.added, probes.nopres)),]
+  p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[626,4:ncol(p.a.tot_pres.abs)])+3)]
+  p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[627,4:ncol(p.a.tot_pres.abs)])+3)]
+  p.a.tot_pres.abs<-p.a.tot_pres.abs[,c(1:3,order(p.a.tot_pres.abs[628,4:ncol(p.a.tot_pres.abs)])+3)]
+  
+  p.a.tot_pres.abs<-p.a.tot_pres.abs[c(626:628, 1:625),]
+
+  p.a.tot_pres.abs.meta<-p.a.tot_pres.abs[1:3,]
+  p.a.tot_pres.abs.data<-p.a.tot_pres.abs[4:nrow(p.a.tot_pres.abs),]
+  MT<-p.a.tot_pres.abs[-grep("Chr", p.a.tot_pres.abs[,1]),]
+
+  p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[order(unlist(str_match_all(p.a.tot_pres.abs.data[,1], "(?<=\\().+?(?=\\))"))),]
+  p.a.tot_pres.abs.data<-rbind(p.a.tot_pres.abs.meta, p.a.tot_pres.abs.data, MT[-c(1:3),])
+  p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[2,4:ncol(p.a.tot_pres.abs.data)])+3)]
+  p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[1,4:ncol(p.a.tot_pres.abs.data)])+3)]
+  p.a.tot_pres.abs.data<-p.a.tot_pres.abs.data[,c(1,2,3, order(p.a.tot_pres.abs.data[3,4:ncol(p.a.tot_pres.abs.data)])+3)]
+
+  
+# 24. Filter table removing samples and probes
+  filtered.table<-p.a.tot_pres.abs.data[-which(p.a.tot_pres.abs.data[,1] %in% probes.lowN), -which(colnames(p.a.tot_pres.abs.data) %in% samp.to.remove)]
+  removed.table<-p.a.tot_pres.abs.data[c(1:3, which(p.a.tot_pres.abs.data[,1] %in% probes.lowN)), c(1:3, which(colnames(p.a.tot_pres.abs.data) %in% samp.to.remove))]
+
+  
+# 25. Recalculate missing fraction in the probes and also in the samples, and remove any probes that is represented in less than 50% 
+  probes.lowN.added<-apply(filtered.table[-c(1:3),4:ncol(filtered.table)], 1, function(x){
+    
+    y<-length(which(x=="N"))/length(x)
+    return(y)
+  })
+  names(probes.lowN.added)<-filtered.table[-c(1:3),1]
+  probes.lowN.added<-names(probes.lowN.added)[which(probes.lowN.added>.5)]
+
+  
+# 26. Recalculate missing fraction in the probes and also in the samples, and remove any probes that are called as reference across all filtered samples
+  probes.nopres<-apply(filtered.table[-c(1:3),4:ncol(filtered.table)], 1, function(x){
+    
+    y<-length(which(x=="1"))/length(x)
+    return(y)
+  })
+  names(probes.nopres)<-filtered.table[-c(1:3),1]
+  probes.nopres<-names(probes.nopres)[which(probes.nopres==0)]
+  
+  filtered.table.postfilter<-filtered.table[-which(filtered.table[,1] %in% c(probes.lowN.added, probes.nopres)),]
 
 
 
+# 27. Remove Probes with >50% N within the target group (group that sample is classified in) using group-representing probes
+  probe.names<-filtered.table.postfilter[-c(1:3),1]
+  probe.names<-unlist(str_match_all(probe.names, "(?<=\\().+?(?=\\))"))
+  probe.names<-probe.names[-which(probe.names %in% c("All_groups_excluding_377T1", "All_groups_ancestral",  "VEP_ATR", "VEP_MET", "VEP_MSH6"))]
+
+  groups<-t(filtered.table.postfilter)
+  colnames(groups)[4:ncol(groups)]<-groups[1,4:ncol(groups)]
+  groups<-groups[-1,]
+  groups<-as.data.frame(groups)
+  groups<-groups[-c(1:2),]
+  groups$Group<-haplos$Groups[match(rownames(groups), haplos$Sample.TCG_ID)]
+  groups$`MT Haplogroup`<-haplos$Complete.Haplotype[match(rownames(groups), haplos$Sample.TCG_ID)]
+  
+
+  # Updates to sample classification:
+  groups$`MT Haplogroup`[grep("358T3.1", rownames(groups))]<-"DFT1_0"
+  groups$Group[which(rownames(groups)=="426T1")]<-"DFT1_3_Channel"
+  groups$Group[which(rownames(groups)=="390T1")]<-"DFT1_0_Freycinet"
+  groups$Group[which(rownames(groups)=="219T")]<-"DFT1_0_Freycinet"
+  
+  haplos$Groups[which(haplos$Sample.TCG_ID=="426T1")]<-"DFT1_3_Channel"
+  haplos$Groups[which(haplos$Sample.TCG_ID=="390T1")]<-"DFT1_0_Freycinet"
+  haplos$Groups[which(haplos$Sample.TCG_ID=="219T")]<-"DFT1_0_Freycinet"
+  haplos$Groups[which(haplos$Sample.TCG_ID=="1049T1")]<-"DFT1_2_Kempton"
 
 
 
-
-
-
-# Remove Probes with >50% N within the target group
-probe.names<-filtered.table.postfilter[-c(1:3),1]
-probe.names<-unlist(str_match_all(probe.names, "(?<=\\().+?(?=\\))"))
-probe.names<-probe.names[-which(probe.names %in% c("All_groups_excluding_377T1", "All_groups_ancestral",  "VEP_ATR", "VEP_MET", "VEP_MSH6"))]
-#filtered.table.postfilter<-cbind(filtered.table.postfilter, c(rep("NA", 3),probe.names, rep("NA", 121)))
-
-groups<-t(filtered.table.postfilter)
-colnames(groups)[4:ncol(groups)]<-groups[1,4:ncol(groups)]
-groups<-groups[-1,]
-groups<-as.data.frame(groups)
-groups<-groups[-c(1:2),]
-groups$Group<-haplos$Groups[match(rownames(groups), haplos$Sample.TCG_ID)]
-groups$`MT Haplogroup`<-haplos$Complete.Haplotype[match(rownames(groups), haplos$Sample.TCG_ID)]
-
-
-groups$`MT Haplogroup`[grep("358T3.1", rownames(groups))]<-"DFT1_0"
-groups$Group[which(rownames(groups)=="426T1")]<-"DFT1_3_Channel"
-groups$Group[which(rownames(groups)=="390T1")]<-"DFT1_0_Freycinet"
-groups$Group[which(rownames(groups)=="219T")]<-"DFT1_0_Freycinet"
-
-haplos$Groups[which(haplos$Sample.TCG_ID=="426T1")]<-"DFT1_3_Channel"
-haplos$Groups[which(haplos$Sample.TCG_ID=="390T1")]<-"DFT1_0_Freycinet"
-haplos$Groups[which(haplos$Sample.TCG_ID=="219T")]<-"DFT1_0_Freycinet"
-haplos$Groups[which(haplos$Sample.TCG_ID=="1049T1")]<-"DFT1_2_Kempton"
-
-
-
-groups<-groups[-which(rownames(groups)=="reference"),]
-
-group.calls<-NULL
-for(y in 1:3){
-  for(x in 4:ncol(groups)){
-    temp<-table(groups[,c(y, x)]) 
-    temp<-melt(temp)
-    temp$mip_name<-names(temp)[2]
-    names(temp)<-c("Grouping", "Call", "Value", "mip_name")
-    group.calls<-rbind(group.calls, temp)
+  groups<-groups[-which(rownames(groups)=="reference"),]
+  group.calls<-NULL
+  for(y in 1:3){
+    for(x in 4:ncol(groups)){
+      temp<-table(groups[,c(y, x)]) 
+      temp<-melt(temp)
+      temp$mip_name<-names(temp)[2]
+      names(temp)<-c("Grouping", "Call", "Value", "mip_name")
+      group.calls<-rbind(group.calls, temp)
+    }
   }
-}
-
-mip_rebalanced_group_match <- read.csv("~/Downloads//mip_rebalanced_group_match1.csv", stringsAsFactors=FALSE)
-
-mip_rebalanced_group_match$Groups[which(mip_rebalanced_group_match$Groups=="")]<-mip_rebalanced_group_match$Clades[which(mip_rebalanced_group_match$Groups=="")]
-
-mip_rebalanced_group_match.filtered<-mip_rebalanced_group_match[which(mip_rebalanced_group_match$mip_name %in% filtered.table.postfilter[,1]),]
-
-group.mips.match<-NULL
-for(y in 1:nrow(mip_rebalanced_group_match.filtered)){
   
-  list.groups<-gsub(" ", "", unlist(str_split(mip_rebalanced_group_match.filtered$Targeted.Groups[y], ";")))
-  filtered.temp<-group.calls[which(gsub(" ", "", group.calls$Grouping) %in% list.groups & group.calls$mip_name == mip_rebalanced_group_match.filtered$mip_name[y]),]
-  filtered.temp<-filtered.temp[which(filtered.temp[,2] %in% c("0", "1", "N")),]
-  N.prop<-sum(filtered.temp$Value[which(filtered.temp$Call=="N")])/sum(filtered.temp$Value)
-  tot.counts<-sum(filtered.temp$Value)
-  calls<-c(filtered.temp$mip_name[1],N.prop, tot.counts)
-  group.mips.match<-rbind(group.mips.match, calls)
-}
-
-group.mips.match<-group.mips.match[-which(is.na(group.mips.match[,1])),]
-group.mips.match<-as.data.frame(group.mips.match)
-group.mips.match$Probe_set<-unlist(stringr::str_extract_all(group.mips.match[,1], "\\([^()]+\\)"))
-group.mips.match.table<-unique(group.mips.match[,c("Probe_set", "V3")])
-
-
-
-probes.lowN.added2<-group.mips.match[which(as.numeric(as.character(group.mips.match[,2]))>.5),1]
-#probes.lowN.added2<-probes.lowN.added2[-which(is.na(probes.lowN.added2))]
-
-filtered.table.postfilter2<-filtered.table.postfilter[-which(filtered.table.postfilter[,1] %in% probes.lowN.added2),]
-
-
-# Remove Probes with all 0s or Ns
-f.z<-apply(filtered.table.postfilter2[-c(1:3),4:ncol(filtered.table.postfilter2)], 1, function(x){
-  y<-length(which(x %in% c("0", "N")))/length(x)
-  return(y)
   
-})
-f.z<-filtered.table.postfilter[-c(1:3),1][which(f.z==1)]
-
-f.N<-apply(filtered.table.postfilter2[-c(1:3),4:ncol(filtered.table.postfilter2)], 1, function(x){
-  y<-length(which(x=="N"))/length(x)
-  return(y)
+# 28. Import MIPs grouping and Haplotype info
   
-})
-f.N<-filtered.table.postfilter[-c(1:3),1][which(f.N==1)]
-
-write.csv(filtered.table.postfilter2, file = "filtered.table.postfilter2.duplicates.50.csv")
-
-
-#################################### Remove with Second Filter ######################################
-tot.probes.removed<-mips_rebalanced_vep$mip_name[-which(mips_rebalanced_vep$mip_name %in% filtered.table.postfilter2[,1])]
-samp.removed<-supp.table1[-which(supp.table1[,1] %in% colnames(filtered.table.postfilter2)),]
-
-
-filtered.table.postfilter3<-filtered.table.postfilter2
-
-mip.ac.rebalanced.d1.only.reshaped<-dcast(unique(mip.ac.rebalanced.d1.only[,c("mip_name", "Sample.TCG_ID", 
-                                                                              "Mode_VAF", "Median_VAF", "MIP_fraction")]),
-                                          Sample.TCG_ID  + Mode_VAF + Median_VAF  ~ mip_name, value.var = "MIP_fraction" )
-
-mip.ac.rebalanced.d1.only.reshaped$Median_VAF<-as.character(mip.ac.rebalanced.d1.only.reshaped$Median_VAF)
-mip.ac.rebalanced.d1.only.reshaped$Median_VAF<-supp.table1[match(unlist(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID), supp.table1[,1]), 2]
-
-
-
-exp.reads.df<-NULL
-for(x in colnames(filtered.table.postfilter3)[-c(1:3, ncol(filtered.table.postfilter3))]){
-  temp<- unlist(mip.ac.rebalanced.d1.only.reshaped[which(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID %in% x),])
-  temp<-as.character(temp)
-  temp.reads<- as.numeric(str_split_fixed(temp[4:length(temp)], "/", 2)[,2])*as.numeric(as.character(temp[3]))*0.5
-  names(temp.reads)<-colnames(mip.ac.rebalanced.d1.only.reshaped)[4:ncol(mip.ac.rebalanced.d1.only.reshaped)]
-  temp.probes<-names(temp.reads)[which(temp.reads<30)]
-  temp.Ns<-filtered.table.postfilter3[which(filtered.table.postfilter3[,1] %in% temp.probes),x]
-  filtered.table.postfilter3[which(filtered.table.postfilter3[,1] %in% temp.probes),x][which(temp.Ns=="0")]<-"N"
+  mip_rebalanced_group_match <- read.csv("~/Downloads//mip_rebalanced_group_match1.csv", stringsAsFactors=FALSE)
   
-  temp.complete<-c(as.character(temp[1:3]), temp.reads)
-  #names(temp.complete)<-colnames(mip.ac.rebalanced.d1.only.reshaped)
+  mip_rebalanced_group_match$Groups[which(mip_rebalanced_group_match$Groups=="")]<-mip_rebalanced_group_match$Clades[which(mip_rebalanced_group_match$Groups=="")]
   
-  exp.reads.df<-rbind(exp.reads.df, temp.complete)
-}
-
-#exp.reads.df[which(exp.reads.df<30)]<-"N"
-
-# Remove Probes with all 0s or Ns
-f.z<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
-  y<-length(which(x %in% c("0", "N")))/length(x)
-  return(y)
+  mip_rebalanced_group_match.filtered<-mip_rebalanced_group_match[which(mip_rebalanced_group_match$mip_name %in% filtered.table.postfilter[,1]),]
   
-})
-f.z<-filtered.table.postfilter3[-c(1:3),1][which(f.z==1)]
-
-f.N<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
-  y<-length(which(x=="N"))/length(x)
-  return(y)
+  group.mips.match<-NULL
+  for(y in 1:nrow(mip_rebalanced_group_match.filtered)){
+    
+    list.groups<-gsub(" ", "", unlist(str_split(mip_rebalanced_group_match.filtered$Targeted.Groups[y], ";")))
+    filtered.temp<-group.calls[which(gsub(" ", "", group.calls$Grouping) %in% list.groups & group.calls$mip_name == mip_rebalanced_group_match.filtered$mip_name[y]),]
+    filtered.temp<-filtered.temp[which(filtered.temp[,2] %in% c("0", "1", "N")),]
+    N.prop<-sum(filtered.temp$Value[which(filtered.temp$Call=="N")])/sum(filtered.temp$Value)
+    tot.counts<-sum(filtered.temp$Value)
+    calls<-c(filtered.temp$mip_name[1],N.prop, tot.counts)
+    group.mips.match<-rbind(group.mips.match, calls)
+  }
   
-})
-f.N<-filtered.table.postfilter3[-c(1:3),1][which(f.N==1)]
+  group.mips.match<-group.mips.match[-which(is.na(group.mips.match[,1])),]
+  group.mips.match<-as.data.frame(group.mips.match)
+  group.mips.match$Probe_set<-unlist(stringr::str_extract_all(group.mips.match[,1], "\\([^()]+\\)"))
+  group.mips.match.table<-unique(group.mips.match[,c("Probe_set", "V3")])
 
 
-# Remove Samples with Greater than 50%Ns
-f.N<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
-  y<-length(which(x=="N"))/length(x)
-  return(y)
+# 29. Identify group-representing probes which have greater than 50% missingness across samples that are in the group
+  probes.lowN.added2<-group.mips.match[which(as.numeric(as.character(group.mips.match[,2]))>.5),1]
+  filtered.table.postfilter2<-filtered.table.postfilter[-which(filtered.table.postfilter[,1] %in% probes.lowN.added2),]
   
-})
-f.N<-filtered.table.postfilter3[-c(1:3),1][which(f.N>.5)]
-
-
-filtered.table.postfilter3<-filtered.table.postfilter3[-which(filtered.table.postfilter3[,1] %in% f.N),]
-
-
-
-f.s<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 2, function(x){
-  y<-length(which(x %in% c("N")))/length(x)
-  return(y)
   
-})
-f.s<-colnames(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)])[which(f.s>.5)]
+# 30. Remove Probes with all 0s/Ns, 0s, or Ns
+  f.z<-apply(filtered.table.postfilter2[-c(1:3),4:ncol(filtered.table.postfilter2)], 1, function(x){
+    y<-length(which(x %in% c("0", "N")))/length(x)
+    return(y)
+    
+  })
+  f.z<-filtered.table.postfilter[-c(1:3),1][which(f.z==1)]
+  
+  f.N<-apply(filtered.table.postfilter2[-c(1:3),4:ncol(filtered.table.postfilter2)], 1, function(x){
+    y<-length(which(x=="N"))/length(x)
+    return(y)
+    
+  })
+  f.N<-filtered.table.postfilter[-c(1:3),1][which(f.N==1)]
 
-filtered.table.postfilter3<-filtered.table.postfilter3[,-which(colnames(filtered.table.postfilter3) %in% f.s)]
-
-
-
-
-#Imputation with Missing Data based on groups:
-
-filtered.table.postfilter2.dist<-filtered.table.postfilter3
-filtered.table.postfilter2.dist[which(filtered.table.postfilter2.dist=="N")]<-NA
-#filtered.table.postfilter2.dist<-as.data.frame(filtered.table.postfilter2.dist)
-#filtered.table.postfilter2.dist<-cbind(filtered.table.postfilter2.dist, filtered.table.postfilter2.dist[,2])
-#colnames(filtered.table.postfilter2.dist)[ncol(filtered.table.postfilter2.dist)]<-"reference"
-
-dt.mat.samples.orig<-filtered.table.postfilter2.dist[4:nrow(filtered.table.postfilter2.dist),-c(1:3)]
-rownames(dt.mat.samples.orig)<-rownames(filtered.table.postfilter2.dist)[4:nrow(filtered.table.postfilter2.dist)]
-
-
-d.knn.data.tree.seq.orig<-apply(dt.mat.samples.orig, 2, 
-                                function(x){
-                                  y<-x
-                                  y[which(x==0)]<-filtered.table.postfilter2.dist[(which(x==0)+3),2]
-                                  y[which(x>0)]<-filtered.table.postfilter2.dist[(which(x>0)+3),3]
-                                  y[which(is.na(x))]<-"N"
-                                  return(y)
-                                  
-                                })
+  write.csv(filtered.table.postfilter2, file = "filtered.table.postfilter2.duplicates.50.csv")
 
 
 
-d.knn.data.tree.seq.orig<-apply(dt.mat.samples.orig, 2, 
-                                function(x){
-                                  y<-x
-                                  y[which(x==0)]<-filtered.table.postfilter2.dist[(which(x==0)+3),2]
-                                  y[which(x>0)]<-filtered.table.postfilter2.dist[(which(x>0)+3),3]
-                                  y[which(is.na(x))]<-ifelse(grepl("GT|TG", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "K", ifelse(
-                                    grepl("AC|CA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "M", ifelse(
-                                      grepl("CG|GC", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "S", ifelse( 
-                                        grepl("AT|TA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "W", ifelse( 
-                                          grepl("AG|GA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "R", ifelse( 
-                                            grepl("CT|TC", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "Y", "N"))))))
-                                  return(y)
-                                  
-                                })
+# 31. Identify probes and samples that remain from the above filtering
+  tot.probes.removed<-mips_rebalanced_vep$mip_name[-which(mips_rebalanced_vep$mip_name %in% filtered.table.postfilter2[,1])]
+  samp.removed<-supp.table1[-which(supp.table1[,1] %in% colnames(filtered.table.postfilter2)),]
+
+
+  filtered.table.postfilter3<-filtered.table.postfilter2
+
+  mip.ac.rebalanced.d1.only.reshaped<-dcast(unique(mip.ac.rebalanced.d1.only[,c("mip_name", "Sample.TCG_ID", 
+                                                                                "Mode_VAF", "Median_VAF", "MIP_fraction")]),
+                                            Sample.TCG_ID  + Mode_VAF + Median_VAF  ~ mip_name, value.var = "MIP_fraction" )
+
+  mip.ac.rebalanced.d1.only.reshaped$Median_VAF<-as.character(mip.ac.rebalanced.d1.only.reshaped$Median_VAF)
+  mip.ac.rebalanced.d1.only.reshaped$Median_VAF<-supp.table1[match(unlist(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID), supp.table1[,1]), 2]
+
+
+# 32. Calculate the number of expected reads to call presence for variants representing groups.
+      # If number of reads is lower than number of expected reads, or there is less than 30 total reads across the variant, then assign "N" for ambiguity
+
+  exp.reads.df<-NULL
+  for(x in colnames(filtered.table.postfilter3)[-c(1:3, ncol(filtered.table.postfilter3))]){
+    temp<- unlist(mip.ac.rebalanced.d1.only.reshaped[which(mip.ac.rebalanced.d1.only.reshaped$Sample.TCG_ID %in% x),])
+    temp<-as.character(temp)
+    temp.reads<- as.numeric(str_split_fixed(temp[4:length(temp)], "/", 2)[,2])*as.numeric(as.character(temp[3]))*0.5
+    names(temp.reads)<-colnames(mip.ac.rebalanced.d1.only.reshaped)[4:ncol(mip.ac.rebalanced.d1.only.reshaped)]
+    temp.probes<-names(temp.reads)[which(temp.reads<30)]
+    temp.Ns<-filtered.table.postfilter3[which(filtered.table.postfilter3[,1] %in% temp.probes),x]
+    filtered.table.postfilter3[which(filtered.table.postfilter3[,1] %in% temp.probes),x][which(temp.Ns=="0")]<-"N"
+    
+    temp.complete<-c(as.character(temp[1:3]), temp.reads)
+  
+    exp.reads.df<-rbind(exp.reads.df, temp.complete)
+  }
+
+
+# 33. Remove any probes that are either all 0/Ns or Ns
+  f.z<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
+    y<-length(which(x %in% c("0", "N")))/length(x)
+    return(y)
+    
+  })
+  f.z<-filtered.table.postfilter3[-c(1:3),1][which(f.z==1)]
+  
+  f.N<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
+    y<-length(which(x=="N"))/length(x)
+    return(y)
+    
+  })
+  f.N<-filtered.table.postfilter3[-c(1:3),1][which(f.N==1)]
+
+
+# 34. Remove probes and samples with Greater than 50% Ns
+  f.N<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 1, function(x){
+    y<-length(which(x=="N"))/length(x)
+    return(y)
+    
+  })
+  f.N<-filtered.table.postfilter3[-c(1:3),1][which(f.N>.5)]
+  filtered.table.postfilter3<-filtered.table.postfilter3[-which(filtered.table.postfilter3[,1] %in% f.N),]
+
+
+  f.s<-apply(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)], 2, function(x){
+    y<-length(which(x %in% c("N")))/length(x)
+    return(y)
+    
+  })
+  f.s<-colnames(filtered.table.postfilter3[-c(1:3),4:ncol(filtered.table.postfilter3)])[which(f.s>.5)]
+  filtered.table.postfilter3<-filtered.table.postfilter3[,-which(colnames(filtered.table.postfilter3) %in% f.s)]
 
 
 
-fas.seq<-apply(d.knn.data.tree.seq.orig, 2, function(x){
-  paste(x, collapse = "")
-})
-names(fas.seq)<-paste0(names(fas.seq), "_", seq(1, length(fas.seq), 1))
-fas.seq<-DNAStringSet(fas.seq)
+# 35. Reformat table to create the fasta file
+  dt.mat.samples.orig<-filtered.table.postfilter3[4:nrow(filtered.table.postfilter3),-c(1:3)]
+  rownames(dt.mat.samples.orig)<-rownames(filtered.table.postfilter3)[4:nrow(filtered.table.postfilter3)]
+
+
+
+  d.knn.data.tree.seq.orig<-apply(dt.mat.samples.orig, 2, 
+                                  function(x){
+                                    y<-x
+                                    y[which(x==0)]<-filtered.table.postfilter2.dist[(which(x==0)+3),2]
+                                    y[which(x>0)]<-filtered.table.postfilter2.dist[(which(x>0)+3),3]
+                                    y[which(is.na(x))]<-ifelse(grepl("GT|TG", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "K", ifelse(
+                                      grepl("AC|CA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "M", ifelse(
+                                        grepl("CG|GC", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "S", ifelse( 
+                                          grepl("AT|TA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "W", ifelse( 
+                                            grepl("AG|GA", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "R", ifelse( 
+                                              grepl("CT|TC", paste0(filtered.table.postfilter2.dist[which(is.na(x)),2],filtered.table.postfilter2.dist[which(is.na(x)),3])), "Y", "N"))))))
+                                    return(y)
+                                    
+                                  })
+  
+  
+  fas.seq<-apply(d.knn.data.tree.seq.orig, 2, function(x){
+    paste(x, collapse = "")
+  })
+  names(fas.seq)<-paste0(names(fas.seq), "_", seq(1, length(fas.seq), 1))
+  fas.seq<-DNAStringSet(fas.seq)
 
