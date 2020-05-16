@@ -1,0 +1,1089 @@
+---
+title: 'R Notebook: Diploid vs Tetraploid Analysis'
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+This starts from the haplotype summary table generated on 11/28/19. 
+
+This is an analysis of the differences observed between diploids and tetraploids. 
+Added a section of total number of CNVs that are diploid exclusive and tetraploid exclusive with the total number of diploids and total number of tetraploids. Update: I changed the methods for quantifying the total genome size: 
+
+
+
+# Methods:
+##### Libraries and Initial Inputs
+
+```{r Import Data, warnings = FALSE}
+# Import Useful Libraries
+library(reshape2)
+library(ggplot2)
+library(stringr)
+library(grid)
+library(gridExtra)
+
+# Import Data
+haplos <- read.csv("~/Desktop/Devil/2020-04-30_TableS1_Tumours-Hosts.csv", stringsAsFactors=FALSE)
+
+
+haplos$Total_CNVs<-as.numeric(haplos$Total_CNVs)
+haplos$Total_gains<-as.numeric(haplos$Total_gains)
+haplos$Total_losses<-as.numeric(haplos$Total_losses)
+haplos$Total_CNVs_linked<-as.numeric(haplos$Total_CNVs_linked)
+haplos$Total_CNVs_linked_gains<-as.numeric(haplos$Total_CNVs_linked_gains)
+haplos$Total_CNVs_linked_losses<-as.numeric(haplos$Total_CNVs_linked_losses)
+haplos$Total_genome_affected<-as.numeric(haplos$Total_genome_affected)
+haplos$Total_genome_affected_gain<-as.numeric(haplos$Total_genome_affected_gain)
+haplos$Total_genome_affected_loss<-as.numeric(haplos$Total_genome_affected_loss)
+
+haplos$Total_genome_affected_gain<-as.numeric(haplos$Total_genome_affected_gain)
+haplos$Total_genome_affected_loss<-as.numeric(haplos$Total_genome_affected_loss)
+
+
+cnv_table2 <- read.csv("~/Desktop/Devil/2020-03-04_1736_CNV_summary_table.csv", stringsAsFactors=FALSE)
+colnames(cnv_table2)[67:ncol(cnv_table2)]<-gsub("X", "", colnames(cnv_table2)[67:ncol(cnv_table2)])
+`%notin%` <- Negate(`%in%`)
+
+
+genome_size<-round(2640200000, -5)
+haplos$Genome_remaining<-ifelse(grepl("Tetra", haplos$Tetraploid), genome_size*4, genome_size*2) 
+
+for(x in 1:nrow(haplos)){
+  if(length(which(colnames(cnv_table2) %in% haplos$Sample_ID[x]))>0){
+  samp_cnv<-cnv_table2[,c(1:65, which(colnames(cnv_table2) %in% haplos$Sample_ID[x]))]
+  samp_cnv<-samp_cnv[which(samp_cnv[,ncol(samp_cnv)]>0),]
+  samp_cnv$CNs<-""
+  
+  haplos$Total_CNVs[x]<-nrow(samp_cnv)
+  haplos$Total_gains[x]<-nrow(samp_cnv[which(samp_cnv$Type=="gain"),])
+  haplos$Total_losses[x]<-nrow(samp_cnv[which(samp_cnv$Type=="loss"),])
+  haplos$CNV_string[x]<-paste(samp_cnv$New.CNV_ID_ext, collapse="_")
+  
+  ugain<-samp_cnv[which(samp_cnv$Linkage.group..gains.!=""),]
+  ugain1<-unique(ugain$Linkage.group..gains)
+  uloss<-samp_cnv[which(samp_cnv$Linkage.group..losses.!=""),]
+  uloss1<-unique(uloss$Linkage.group..losses.)
+  uloss1<-gsub(" ", "", uloss1)
+  ugain1<-gsub(" ", "", ugain1)
+  
+
+
+  haplos$Total_CNVs_linked[x]<-length(c(ugain1, uloss1))
+  haplos$Total_CNVs_linked_gains[x]<-length(ugain1)
+  haplos$Total_CNVs_linked_losses[x]<-length(uloss1)
+  links<-rbind(uloss, ugain)
+  links<-links[order(links$New.CNV_ID),]
+  links$Link<-ifelse(links$Linkage.group..losses.=="", links$Linkage.group..gains., links$Linkage.group..losses.)
+  haplos$CNV_string_linked[x]<-paste(c(uloss1, ugain1), collapse=" | ")
+
+samp_cnv$CNs<-NA
+  for(y in 1:nrow(samp_cnv)){
+  z=samp_cnv$Sample_CNV_Group[y]
+  lists<-unlist(str_split(z, "[,]"))
+  lists_idx<-gsub(" ", "", str_split_fixed(lists, "[(]", 2)[,1])
+  lists_cn<-gsub(" ", "", str_split_fixed(lists, "[)]", 2)[,2])
+   samp_cnv$CNs[y]<-lists_cn[which(lists_idx == names(samp_cnv)[ncol(samp_cnv)-1])]
+  }
+  samp_cnv<-unique(samp_cnv[,c(1:5,8:10,67)])
+  samp_cnv$CNs<-as.numeric(samp_cnv$CNs)
+  
+  if(!grepl("Tetra", haplos$Tetraploid[x])){
+  samp_cnv<-samp_cnv[!grepl("[.]5", samp_cnv$CNs),]
+  
+  haplos$Total_genome_affected_gain[x]<-sum(samp_cnv$width[which(samp_cnv$CNs>2)]*(samp_cnv$CNs[which(samp_cnv$CNs>2)]-2))
+  haplos$Total_genome_affected_loss[x]<-sum(samp_cnv$width[which(samp_cnv$CNs<2)]*(2-samp_cnv$CNs[which(samp_cnv$CNs<2)]))
+  haplos$Total_genome_affected[x]<-haplos$Total_genome_affected_gain[x]+haplos$Total_genome_affected_loss[x]
+  haplos$Genome_remaining[x]<-haplos$Genome_remaining[x]+haplos$Total_genome_affected_gain[x]-haplos$Total_genome_affected_loss[x]
+  }
+  if(grepl("Tetra", haplos$Tetraploid[x])){
+  samp_cnv_comp<-samp_cnv
+  
+
+  haplos$Total_genome_affected_gain[x]<-sum(samp_cnv_comp$width[which(samp_cnv$CNs>2)]*((samp_cnv$CNs[which(samp_cnv$CNs>2)]-2)*2))
+  haplos$Total_genome_affected_loss[x]<-sum(samp_cnv_comp$width[which(samp_cnv$CNs<2)]*((2-samp_cnv$CNs[which(samp_cnv$CNs<2)])*2))
+  haplos$Total_genome_affected[x]<-haplos$Total_genome_affected_gain[x]+haplos$Total_genome_affected_loss[x]
+  haplos$Genome_remaining[x]<-haplos$Genome_remaining[x]+haplos$Total_genome_affected_gain[x]-haplos$Total_genome_affected_loss[x]
+
+  }
+
+  }
+}
+
+IDs<-as.numeric(str_split_fixed(list.files("~/Downloads/Front_Face_All/"), "-", 2)[,1])
+haplos$included_in_facemaps<-"FALSE"
+haplos$included_in_facemaps[which(haplos$TCG_ID %in% IDs)]<-"TRUE"
+
+haplos$Date<-as.Date(haplos$Complete.date..dd.mm.yyyy..of.sampling, format="%m/%d/%y")
+
+idx<-which(haplos$Complete.date..dd.mm.yyyy..of.sampling=="Unknown")
+for(x in idx ){
+  haplos$Date[x]<-sample(seq(as.Date(paste0("1/1/",substr(haplos$Year[x], 3,4)), format="%m/%d/%y"), 
+             as.Date(paste0("1/1/",substr(haplos$Year[x]+1, 3,4)), format="%m/%d/%y"), by="day"), 1)
+
+  
+}
+
+write.csv(haplos, file = "haplos_5_1_20.csv", row.names = FALSE)
+
+haplos<-haplos[-grep("Duplicate", haplos$Duplicate.or.time.course.biopsy),]
+haplos<-haplos[grep("Clade", haplos$Clade),]
+
+model.a1 <- rlm(Genome_remaining/1e9 ~ Date, data=haplos[which(haplos$Tetraploid=="" & haplos$Tissue.or.cell.line=="Tissue" & haplos$CNV_string!=""),])
+temp_var <- predict(model.a1, interval="prediction")
+totals.pred<-cbind(haplos[which(haplos$Tetraploid=="" & haplos$Tissue.or.cell.line=="Tissue" &
+                                  haplos$CNV_string!=""),], temp_var)
+
+pdf("nuclear_diploid_genome_size_050120.pdf", height = 5, width = 10, useDingbats = FALSE)
+ggplot(totals.pred, aes(Date, Genome_remaining/1e9))+
+  #geom_line(aes(y=lwr), linetype = "solid")+
+  #geom_line(aes(y=upr), linetype = "solid")+
+  geom_point(size = 2, stroke = 1, alpha = .3, color = "black")+
+  geom_smooth(method = "glm", se = TRUE,  fill = "cornflowerblue", color = "black", lwd = 1.2)+
+  ggtitle("Diploid Genome Size Across Time: DFT1")+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color = "black", size = 13),
+    axis.title = element_text(color = "black", size = 15),
+    plot.title = element_text(color = "black", size = 18),
+    #axis.ticks = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    strip.background =element_blank(),
+    strip.text=element_text(size = 13),
+    panel.background = element_blank())+
+  labs(x = "Year", y = "Genome Size (Gbp)")
+dev.off()
+
+p<-ggplot(totals.pred, aes(Date, Genome_remaining/1e9))+
+  #geom_line(aes(y=lwr), linetype = "solid")+
+  #geom_line(aes(y=upr), linetype = "solid")+
+  geom_point(size = 2, stroke = 1, alpha = .3, color = "black")+
+  geom_smooth(method = "glm", se = TRUE,  fill = "cornflowerblue", color = "black", lwd = 1.2)+
+  labs(title = "GLM")
+p2<-ggplot(totals.pred, aes(Date, Genome_remaining/1e9))+
+  #geom_line(aes(y=lwr), linetype = "solid")+
+  #geom_line(aes(y=upr), linetype = "solid")+
+  geom_point(size = 2, stroke = 1, alpha = .3, color = "black")+
+  geom_smooth(method = "rlm", se = TRUE,  fill = "cornflowerblue", color = "black", lwd = 1.2)+
+  labs(title = "RLM")
+
+grid.arrange(p, p2, ncol = 2)
+
+
+internal<-haplos[grep("Met|met", haplos$Metastasis.),]
+internal$Type<-"Metastasis"
+external<-haplos[grep("Fac|fac", haplos$General.Body.Location),]
+external$Type<-"Primary Facial"
+
+total<-rbind(internal, external)
+total$Type<-factor(total$Type, levels = c("Primary Facial", "Metastasis"))
+
+pdf("primary_v_internal_041320.pdf", height = 5, width = 7, useDingbats = FALSE)
+ggplot(total[which(total$Cell.Line.or.Tissue.Biopsy=="Tissue" & total$Duplicate.or.Time.Course.biopsy.==""),], aes(Type, Total_CNVs))+geom_boxplot(width = .5, outlier.shape = NA)+
+  #geom_jitter(height = 0, width = .18, size = 3, alpha = .5)+
+  geom_beeswarm(size = 2, alpha = .8)+
+  scale_y_continuous(breaks = seq(0,50,10))+
+  ggtitle("Total Number of CNVs: Primary Facial vs Internal")+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color = "black", size = 13),
+    axis.title = element_text(color = "black", size = 15),
+    plot.title = element_text(color = "black", size = 18),
+    #axis.ticks = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    strip.background =element_blank(),
+    strip.text=element_text(size = 13),
+    panel.background = element_blank())+
+  labs(x = "", y = "Number of CNVs")
+dev.off()
+
+#save(haplos, file = "haplos_tetraploids_diploids_genome_size_12_16_19.RData")
+
+```
+
+##Part 1:
+
+### Add Tetraploid Exclusive and Diploid Exclusive columns:
+```{r}
+
+# Extract columns that have Tetraploid tumors
+cnv_table_tetraploid<-cnv_table2[,c(1:65, which(colnames(cnv_table2) %in% haplos$Sample.TCG_ID[grep("Tet", haplos$Tetraploid)]))]
+# Count the number of Tetraploid tumors for each CNV
+cnv_table_tetraploid_sum<-rowSums(cnv_table_tetraploid[,66:ncol(cnv_table_tetraploid)])
+
+# Do the same for diploid
+cnv_table_diploid<-cnv_table2[,c(1:65, which(colnames(cnv_table2) %in% haplos$Sample.TCG_ID[-grep("Tet", haplos$Tetraploid)]))]
+cnv_table_diploid_sum<-rowSums(cnv_table_diploid[,66:ncol(cnv_table_diploid)])
+
+# Find rows where the number of tetraploids is greater than 0 and diploid is less than 1.
+tetraploid_marker<-which(cnv_table_tetraploid_sum>0 & cnv_table_diploid_sum<1)
+diploid_marker<-which(cnv_table_diploid_sum>0 & cnv_table_tetraploid_sum<1)
+
+
+#Add marker using a loop
+# Identify which Tetraploids are included in the tetraploid exlusive
+cnv_table2$Tetraploid_exclusive<-""
+for(x in tetraploid_marker){
+  samps<-cnv_table_tetraploid[x,66:ncol(cnv_table_tetraploid)]
+  samps<-colnames(samps[which(samps>0)])
+  cnv_table2$Tetraploid_exclusive[x]<-paste(unique(haplos$Tetraploid[which(haplos$Sample.TCG_ID %in% samps)]), collapse = ", ")
+}
+cnv_table2<-cnv_table2[,c(1:65, ncol(cnv_table2), 66:(ncol(cnv_table2)-1))]
+
+
+cnv_table2$Diploid_exclusive<-""
+for(x in diploid_marker){
+  samps<-cnv_table_diploid[x,67:ncol(cnv_table_diploid)]
+  samps<-colnames(samps[which(samps>0)])
+  cnv_table2$Diploid_exclusive[x]<-paste(unique(haplos$Group[which(haplos$Sample.TCG_ID %in% samps)]), collapse = ", ")
+}
+cnv_table2<-cnv_table2[,c(1:66, ncol(cnv_table2), 67:(ncol(cnv_table2)-1))]
+
+
+
+#write.csv(cnv_table2, file = "2019-12-15-CNV_summary_table.csv", row.names = FALSE)
+
+```
+
+
+### Change CNV Table
+```{r, Check Tree}
+
+
+# I'm assuming that there aren't IDs where there is both "G" and "L", with the assumption that "or" is important
+# Start with Gains:
+    # 1) Separate the table: >CN3 vs <CN3
+      cnv_table2_nogl<-cnv_table2[-grep("G", cnv_table2$New.CNV_ID_ext),]
+      cnv_table2_gl<-cnv_table2[grep("G", cnv_table2$New.CNV_ID_ext),]
+    
+    
+    # 2) CNVs that do not have a parent: (KEEP)
+    cnv_table2_gl_1.1<-cnv_table2_gl[-which(str_split_fixed(cnv_table2_gl$New.CNV_ID_ext, "G", 2)[,1] %in% 
+                                              str_split_fixed(cnv_table2_nogl$New.CNV_ID_ext, "G", 2)[,1]),]
+    
+    
+    # 3) CNVs that have G2 and G3, etc.
+    cnv_table2_gl_2<-cnv_table2_gl[-grep("G1", cnv_table2_gl$New.CNV_ID_ext),] # Not G1
+    # Identify all CNVs from the gain "G" table that has the same reference ID as the ones with G2, G3, etc.
+    cnv_table2_gl_2<-cnv_table2_gl[which(str_split_fixed(cnv_table2_gl$New.CNV_ID_ext, "G", 2)[,1] %in% 
+                                           str_split_fixed(cnv_table2_gl_2$New.CNV_ID_ext, "G", 2)[,1]),]
+    
+    # 4) Combine the remaining table.
+    ##Doing this, we exclude any "G1" IDs that also have a parent.
+    cnv_table2<-rbind(cnv_table2_nogl, cnv_table2_gl_1.1)
+    cnv_table2<-unique(rbind(cnv_table2, cnv_table2_gl_2))      
+
+
+# Now use the new table and separate the losses (with the same Code)
+
+# Start with Losses:
+    # 1) Separate the table: <CN1 vs >CN1
+      cnv_table2_nogl<-cnv_table2[-grep("L", cnv_table2$New.CNV_ID_ext),]
+      cnv_table2_gl<-cnv_table2[grep("L", cnv_table2$New.CNV_ID_ext),]
+    
+    
+    # 2) CNVs that do not have a parent: (KEEP)
+    cnv_table2_gl_1.1<-cnv_table2_gl[-which(str_split_fixed(cnv_table2_gl$New.CNV_ID_ext, "L", 2)[,1] %in% 
+                                              str_split_fixed(cnv_table2_nogl$New.CNV_ID_ext, "L", 2)[,1]),]
+    
+    
+    # 3) CNVs that have L2 and L3, etc.
+    cnv_table2_gl_2<-cnv_table2_gl[-grep("L1", cnv_table2_gl$New.CNV_ID_ext),] # Not G1
+    cnv_table2_gl_2<-cnv_table2_gl[which(str_split_fixed(cnv_table2_gl$New.CNV_ID_ext, "L", 2)[,1] %in% 
+                                           str_split_fixed(cnv_table2_gl_2$New.CNV_ID_ext, "L", 2)[,1]),]
+    
+    # 4) Combine the remaining table.
+    cnv_table2<-rbind(cnv_table2_nogl, cnv_table2_gl_1.1)
+    cnv_table2<-unique(rbind(cnv_table2, cnv_table2_gl_2))      
+
+
+
+# Filter the table for only DFT1s and for Cell-lines and create a New table.
+cnv_table<-cnv_table2
+cnv_table<-cnv_table[order(cnv_table$Order),]
+cnv_table<-cnv_table[grep("Clade", cnv_table$Sample_CNV_Group),] # Extract DFT1
+cnv_table<-cnv_table[which(cnv_table$Cell.line!="Cell-line"),] # Remove Cell Lines
+
+
+```
+
+# Obtain Tetraploid-exclusive CNVs, and create a tetraploid specific count.
+```{r}
+cnv_table_tetraploid<-cnv_table[which(cnv_table$Tetraploid_exclusive!=""),]
+
+
+# Obtain all copy number assignments for each row of the new table
+cnv_counts_width<-NULL
+for(x in 1:nrow(cnv_table_tetraploid)){
+  cnvlist<-gsub(" ", "", unlist(str_split(cnv_table_tetraploid$Aberrant.copy.number[x], ",")))
+  cnv_counts_width<-rbind(cnv_counts_width, cbind(cbind(cbind(cnvlist, cnv_table_tetraploid$width[x]), cnv_table_tetraploid$Type[x]), cnv_table_tetraploid$New.CNV_ID_ext[x]))
+  
+}
+cnv_counts_width<-as.data.frame(cnv_counts_width)
+colnames(cnv_counts_width)<-c("CN", "Width", "State", "Ext")
+
+
+# Calculate the CNV Sizes and Collapse any CN5-10 to one bar.
+cnv_counts_width$CN<-as.numeric(as.character(cnv_counts_width$CN))
+cnvorder<-unique(cnv_counts_width$CN)
+cnvorder<-cnvorder[order(cnvorder)]
+#cnv_counts_width$CN[which(cnv_counts_width$CN>=5)]<-">=5"
+#cnvorder[which(cnvorder>=5)]<-">=5"
+cnvorder<-unique(cnvorder)
+cnv_counts_width$CN<-factor(cnv_counts_width$CN, levels=cnvorder, ordered=TRUE)
+cnv_counts_width$Width<-as.numeric(as.character(cnv_counts_width$Width))
+
+
+cnv_counts_width_tetraploid<-cnv_counts_width
+```
+
+
+# Obtain Diploid CNVs, and create a Diploid specific count.
+
+```{r}
+
+cnv_table_diploid<-cnv_table[which(cnv_table$Tetraploid_exclusive==""),]
+
+
+# Obtain all copy number assignments for each row of the new table
+cnv_counts_width_diploid<-NULL
+for(x in 1:nrow(cnv_table_diploid)){
+  cnvlist<-gsub(" ", "", unlist(str_split(cnv_table_diploid$Aberrant.copy.number[x], ",")))
+  cnv_counts_width_diploid<-rbind(cnv_counts_width_diploid, cbind(cbind(cbind(cnvlist, cnv_table_diploid$width[x]), cnv_table_diploid$Type[x]), cnv_table_diploid$New.CNV_ID_ext[x]))
+  
+}
+cnv_counts_width_diploid<-as.data.frame(cnv_counts_width_diploid)
+colnames(cnv_counts_width_diploid)<-c("CN", "Width", "State", "Ext")
+
+
+# Calculate the CNV Sizes and Collapse any CN5-10 to one bar.
+cnv_counts_width_diploid$CN<-as.numeric(as.character(cnv_counts_width_diploid$CN))
+cnvorder<-unique(cnv_counts_width_diploid$CN)
+cnvorder<-cnvorder[order(cnvorder)]
+#cnv_counts_width$CN[which(cnv_counts_width$CN>=5)]<-">=5"
+#cnvorder[which(cnvorder>=5)]<-">=5"
+cnvorder<-unique(cnvorder)
+cnv_counts_width_diploid$CN<-factor(cnv_counts_width_diploid$CN, levels=rev(cnvorder), ordered=TRUE)
+cnv_counts_width_diploid$Width<-as.numeric(as.character(cnv_counts_width_diploid$Width))
+
+
+
+
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE}
+p<-ggplot(cnv_counts_width_diploid, aes(CN, fill = State))+
+  geom_bar()+
+  scale_fill_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "Number of CNVs")+
+  scale_y_continuous(expand=c(0,0), limits = c(0, 300))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text = element_text(size = 13),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,-1,1, -0.3), "cm"),
+            strip.background =element_blank())+coord_flip()
+  #expand_limits(c(0,0))
+
+p1<-ggplot(cnv_counts_width_diploid, aes(CN, log10(Width)))+
+  geom_jitter(aes(color = State),width = .2, size = .4, height = 0, alpha= .4)+
+  #geom_jitter(aes(color = State),width = .2, size = 1.2, shape = 1, stroke = .7, alpha = .5)+
+  geom_boxplot(outlier.shape = NA, alpha =0, width = .5)+
+  scale_color_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "CNV Size log10(bp)")+
+  scale_y_continuous(expand=c(0,0), limits = c(5, 10))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 13),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            #plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            plot.margin=unit(c(1,1,1,0.5), "cm"),
+            strip.background =element_blank())+coord_flip()
+#+expand_limits(c(0,0))
+pdf("fig2a_dft1_only_biopsies_first_diploid.pdf", height = 4.7, width = 5)
+grid.arrange(p, p1, nrow = 1)
+dev.off()
+
+cnv_counts_width_tetraploid_condensed<-plyr::count(cnv_counts_width_tetraploid[,c(1,3)])
+cnv_counts_width_tetraploid_condensed$CN<-as.character(cnv_counts_width_tetraploid_condensed$CN)
+toadd<-data.frame(CN=c(0,3.5, 5,6,7,8,9,10),
+                  State = NA,
+                  freq = NA)
+cnv_counts_width_tetraploid_condensed<-rbind(cnv_counts_width_tetraploid_condensed, toadd)
+cnvorder<-unique(cnv_counts_width_tetraploid_condensed$CN)
+cnvorder<-cnvorder[order(as.numeric(as.character(cnvorder)))]
+cnvorder<-unique(cnvorder)
+cnv_counts_width_tetraploid_condensed$CN<-factor(cnv_counts_width_tetraploid_condensed$CN, levels=cnvorder, ordered=TRUE)
+
+p2<-ggplot(cnv_counts_width_tetraploid_condensed, aes(CN, freq, fill = State))+
+  geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "Number of CNVs")+
+  scale_y_continuous(expand=c(0,0), limits = c(0, 48))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            #axis.text = element_text(size = 18),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(-0.5,1,1,1), "cm"),
+            strip.background =element_blank())
+#+expand_limits(c(0,0))
+
+cnv_counts_width_tetraploid_add<-cnv_counts_width_tetraploid
+cnv_counts_width_tetraploid_add$CN<-as.character(cnv_counts_width_tetraploid_add$CN)
+toadd<-data.frame(CN=c(0, 3.5, 5,6,7,8,9,10),
+                  Width = NA,
+                  State = NA,
+                  Ext = NA)
+cnv_counts_width_tetraploid_add<-rbind(cnv_counts_width_tetraploid_add, toadd)
+cnvorder<-unique(cnv_counts_width_tetraploid_add$CN)
+cnvorder<-cnvorder[order(as.numeric(as.character(cnvorder)))]
+cnvorder<-unique(cnvorder)
+cnv_counts_width_tetraploid_add$CN<-factor(cnv_counts_width_tetraploid_add$CN, levels=cnvorder, ordered=TRUE)
+
+p3<-ggplot(cnv_counts_width_tetraploid_add, aes(CN, log10(Width)))+
+  geom_jitter(aes(color = State),width = .2, size = 1.2, height = 0, alpha= .5, shape = 17)+
+  #geom_jitter(aes(color = State),width = .2, size = 1.2, shape = 1, stroke = .7, alpha = .5)+
+  geom_boxplot(outlier.shape = NA, alpha =0, width = .5)+
+  scale_color_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "CNV Size log10(bp)")+
+  scale_y_continuous(expand=c(0,0), limits = c(5, 10))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text.x = element_blank(),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+#+expand_limits(c(0,0))
+
+grid.arrange(p1, p, ncol = 1)
+grid.arrange(p3, p2, ncol = 1)
+
+cnv_counts_width_diploid_condensed<-plyr::count(cnv_counts_width_diploid[,c("CN", "State")])
+cnv_counts_width_diploid_condensed$Ploidy<-"Diploid"
+cnv_counts_width_tetraploid_condensed$Ploidy<-"Tetraploid"
+total_cnv_condensed<-rbind(cnv_counts_width_diploid_condensed, cnv_counts_width_tetraploid_condensed[which(!is.na(cnv_counts_width_tetraploid_condensed$freq)),])
+cnv_counts_width_tetraploid_add$Ploidy<-"Tetraploid"
+cnv_counts_width_diploid$Ploidy<-"Diploid"
+
+total_cnv_width<-rbind(cnv_counts_width_diploid, cnv_counts_width_tetraploid_add)
+
+
+p4<-ggplot(total_cnv_condensed, aes(CN, freq, group = Ploidy, fill= State))+
+  geom_bar(stat = "identity", position = position_dodge(preserve = "single"))+
+  scale_fill_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "Number of CNVs")+
+  #scale_y_continuous(expand=c(0,0), limits = c(0, 48))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            #axis.text = element_text(size = 18),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(-0.5,1,1,1), "cm"),
+            strip.background =element_blank())
+#+expand_limits(c(0,0))
+
+p5<-ggplot(total_cnv_width, aes(CN, log10(Width)))+
+  geom_jitter(aes(color = State),width = .2, size = .7, height = 0, alpha= .4)+
+  #geom_jitter(aes(color = State),width = .2, size = 1.2, shape = 1, stroke = .7, alpha = .5)+
+  geom_boxplot(outlier.shape = NA, alpha =0, width = .5)+
+  scale_color_manual(values = c("#CB4335","#2E86C1"))+labs(x ="", y = "CNV Size log10(bp)")+
+  scale_y_continuous(expand=c(0,0), limits = c(5, 10))+
+  theme(    legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text.x = element_blank(),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+#+expand_limits(c(0,0))
+
+
+#pdf("fig2a_dft1_only_biopsies_first_diploid_second_tetraploid.pdf", height = 2.8, width = 4.5)
+grid.arrange(p1, p, ncol = 1)
+grid.arrange(p3, p2, ncol = 1)
+dev.off()
+
+
+pdf("fig2a_dft1_only_biopsies_first_diploid.pdf", height = 2.5, width = 4.5)
+grid.arrange(p1, p, nrow = 1)
+dev.off()
+
+
+```
+
+Quantifying the difference: 1 v 1.5 and 2.5 vs 3 to see if there's a difference in the number of losses using Chi-square
+```{r}
+cnv_counts_width_tetraploid$Ploidy<-"Tetraploid"
+cnv_counts_width_diploid$Ploidy<-"Diploid"
+
+cnv_counts_totals<-rbind(cnv_counts_width_diploid[,c(1,4,5)],
+                         cnv_counts_width_tetraploid[,c(1,4,5)])
+cnv_counts_totals<-cnv_counts_totals[!grepl("BM", cnv_counts_totals$Ext),]
+cnv_counts_totals<-cnv_counts_totals[which(cnv_counts_totals$CN %in% c("1", "1.5", "2.5", "3")),]
+cnv_counts_totals$CN<-as.character(cnv_counts_totals$CN)
+cnv_counts_totals_table<-table(cnv_counts_totals)
+
+print("CN1, CN1.5, CN2, CN2.5 between ploidies")
+chisq.test(cnv_counts_totals$CN, cnv_counts_totals$Ploidy)
+
+print("CN1 vs CN1.5 between ploidies")
+cnv_counts_totals_table<-table(cnv_counts_totals[which(cnv_counts_totals$Ploidy %in% c("1", "1.5")),])
+chisq.test(cnv_counts_totals$CN, cnv_counts_totals$Ploidy)
+
+print("CN2.5 vs CN3 between ploidies")
+cnv_counts_totals_table<-table(cnv_counts_totals[which(cnv_counts_totals$Ploidy %in% c("2.5", "3")),])
+chisq.test(cnv_counts_totals$CN, cnv_counts_totals$Ploidy)
+
+
+```
+
+
+
+Number of CNVs on a per tumor basis
+```{r, echo = FALSE, message = FALSE, warnings =FALSE}
+haplos<-haplos[!grepl("Dup", haplos$Duplicate.or.Time.Course.biopsy.),]
+haplos<-haplos[!grepl("Cell", haplos$Cell.Line.or.Tissue.Biopsy),]
+haplos1<-haplos[!is.na(haplos$Total_CNVs),]
+
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_CNVs_linked, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_CNVs, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+
+
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_CNVs_linked_losses, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_losses, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+
+
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_CNVs_linked_gains, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_gains, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+
+
+
+#ggplot(haplos[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Total_genome_affected, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+
+
+ggplot(haplos1[which(haplos1$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),], aes(Ploidy, Genome_remaining, group = Ploidy, fill = Ploidy))+geom_boxplot(outlier.shape = NA)+geom_jitter(width = .3, height = 0)+theme_bw()+scale_fill_grey()
+
+
+```
+
+
+Only Diploids and Tetraploid-Exclusive Tetraploids CNV Size
+```{r, echo = FALSE}
+
+  haplos$Total_genome_affected_gain_exc<-NA
+  haplos$Total_genome_affected_loss_exc<-NA
+  haplos$Total_genome_affected_exc<-NA
+  haplos$Genome_remaining_exc<-NA
+  haplos$CNV_exc<-NA
+
+  
+  
+for(x in 1:nrow(haplos)){
+  if(length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[x]))>0){
+  samp_cnv<-cnv_table[,c(1:67, which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[x]))]
+  samp_cnv<-samp_cnv[which(samp_cnv[,ncol(samp_cnv)]>0),]
+    if(nrow(samp_cnv)>0){
+
+  samp_cnv$CNs<-""
+  for(y in 1:nrow(samp_cnv)){
+  z=samp_cnv$Sample_CNV_Group[y]
+  lists<-unlist(str_split(z, "[,]"))
+  lists_idx<-gsub(" ", "", str_split_fixed(lists, "[(]", 2)[,1])
+  lists_cn<-gsub(" ", "", str_split_fixed(lists, "[)]", 2)[,2])
+   samp_cnv$CNs[y]<-lists_cn[which(lists_idx == names(samp_cnv)[ncol(samp_cnv)-1])]
+  }
+  
+  if(!grepl("Tetra", haplos$Tetraploid[x])){
+  samp_cnv$CNs<-as.numeric(samp_cnv$CNs)
+
+  samp_cnv<-unique(samp_cnv[,c(1:5,8,9,67,69)])
+  haplos$CNV_exc[x]<-length(which(samp_cnv$Diploid_exclusive!=""))
+
+  if(length(which(samp_cnv$Diploid_exclusive!=""))>0){
+  samp_cnv<-samp_cnv[which(samp_cnv$Diploid_exclusive!=""),]
+  samp_cnv<-samp_cnv[!grepl("[.]5", samp_cnv$CNs),]
+  haplos$Total_genome_affected_gain_exc[x]<-sum(samp_cnv$width[which(samp_cnv$CNs>2)]*(samp_cnv$CNs[which(samp_cnv$CNs>2)]-2))
+  haplos$Total_genome_affected_loss_exc[x]<-sum(samp_cnv$width[which(samp_cnv$CNs<2)]*(2-samp_cnv$CNs[which(samp_cnv$CNs<2)]))
+  haplos$Total_genome_affected_exc[x]<-haplos$Total_genome_affected_gain_exc[x]+haplos$Total_genome_affected_loss_exc[x]
+  haplos$Genome_remaining_exc[x]<-haplos$Genome_remaining[x]+haplos$Total_genome_affected_gain_exc[x]-haplos$Total_genome_affected_loss_exc[x]
+  }
+  }
+  if(grepl("Tetra", haplos$Tetraploid[x])){
+  samp_cnv<-unique(samp_cnv[,c(1:5,8,9,66,69)])
+    samp_cnv$CNs<-as.numeric(samp_cnv$CNs)
+  haplos$CNV_exc[x]<-length(which(samp_cnv$Tetraploid_exclusive!=""))
+
+    if(length(which(samp_cnv$Tetraploid_exclusive!=""))>0){
+  samp_cnv<-samp_cnv[which(samp_cnv$Tetraploid_exclusive!=""),]
+
+  samp_cnv_comp<-samp_cnv
+
+  haplos$Total_genome_affected_gain_exc[x]<-sum(samp_cnv_comp$width[which(samp_cnv$CNs>2)]*((samp_cnv$CNs[which(samp_cnv$CNs>2)]-2)*2))
+  haplos$Total_genome_affected_loss_exc[x]<-sum(samp_cnv_comp$width[which(samp_cnv$CNs<2)]*((2-samp_cnv$CNs[which(samp_cnv$CNs<2)])*2))
+  haplos$Total_genome_affected_exc[x]<-haplos$Total_genome_affected_gain_exc[x]+haplos$Total_genome_affected_loss_exc[x]
+  haplos$Genome_remaining_exc[x]<-haplos$Genome_remaining[x]+haplos$Total_genome_affected_gain_exc[x]-haplos$Total_genome_affected_loss_exc[x]
+  }
+  }
+  }
+}
+}
+
+
+
+
+
+
+```
+
+
+Tetraploid exclusive v Diploid exclusive Genome Size (diploid v tetraploid)
+```{r, echo = FALSE}
+
+gain_loss<-melt(haplos[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Experimental.Transmission.=="No"),c("Ploidy", "Total_genome_affected_gain_exc", "Total_genome_affected_loss_exc", "Total_genome_affected_exc")], 
+                id.vars = "Ploidy")
+gain_loss$variable<-as.character(gain_loss$variable)
+gain_loss$variable[grep("gain", gain_loss$variable)]<-"Gain"
+gain_loss$variable[grep("loss", gain_loss$variable)]<-"Loss"
+gain_loss$variable[grep("Total_genome_affected_exc", gain_loss$variable)]<-"Total"
+gain_loss<-gain_loss[!is.na(gain_loss$value),]
+
+ggplot(gain_loss, aes(variable, value, fill = Ploidy, shape = Ploidy))+
+  geom_boxplot(outlier.shape = NA)+geom_point(position=position_jitterdodge(jitter.width = .23, jitter.height = 0),size = 1.8,alpha = .4)+theme_bw()+
+    scale_fill_manual(values = c("white", "white"))+
+  labs(x="", y ="Genome Size Affected (Ploidy exclusive)")+
+    theme(    
+      legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text.y = element_text(size = 13),
+            axis.title.y = element_text(size = 14),
+            axis.text.x = element_text(size = 13),
+            #axis.text.x = element_blank(),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+
+
+```
+
+
+
+```{r, echo = FALSE}
+
+gain_loss<-melt(haplos[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" &
+                               haplos$Experimental.Transmission.=="No" & haplos$Cell.Line.or.Tissue.Biopsy=="Tissue"),c("Ploidy", "Total_CNVs_nom5", "Total_loss_nom5", "Total_gains_nom5", "Clade")], id.vars = c("Ploidy", "Clade"))
+gain_loss$variable<-as.character(gain_loss$variable)
+gain_loss$variable[grep("gain", gain_loss$variable)]<-"Gain"
+gain_loss$variable[grep("loss", gain_loss$variable)]<-"Loss"
+gain_loss$variable[grep("CNVs", gain_loss$variable)]<-"Total"
+gain_loss<-gain_loss[!is.na(gain_loss$value),]
+gain_loss$value<-as.numeric(as.character(gain_loss$value))
+#gain_loss<-melt(haplos[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),c("Ploidy", "Total_losses", "Total_gains", "Total_CNVs_linked","Total_CNVs_linked_gains","Total_CNVs_linked_losses")], id.vars = "Ploidy")
+
+for(x in c("Clade_A1", "Clade_A2", "Clade_B", "Clade_C")){
+  print(x)
+print(wilcox.test(as.numeric(tetraploids$Total_gains_nom5[which(tetraploids$Clade %in% x)]), 
+            as.numeric(diploids$Total_gains_nom5[which(diploids$Clade %in% x)])))
+print(wilcox.test(as.numeric(tetraploids$Total_loss_nom5[which(tetraploids$Clade %in% x)]), 
+            as.numeric(diploids$Total_loss_nom5[which(diploids$Clade %in% x)])))
+print(wilcox.test(as.numeric(tetraploids$Total_CNVs_nom5[which(tetraploids$Clade %in% x)]), 
+            as.numeric(diploids$Total_CNVs_nom5[which(diploids$Clade %in% x)])))
+
+}
+
+s<-ggplot(gain_loss, aes(variable, value, fill = Ploidy, color = Ploidy))+
+  geom_boxplot(outlier.shape = NA)+
+  #geom_violin()+
+  geom_point(position=position_jitterdodge(jitter.width = .2, jitter.height = 0),
+             size = 1, pch = 21, fill = NA, stroke = .5, alpha = .5)+theme_bw()+
+    scale_fill_manual(values = c("white", "#B0B0B0"))+
+    scale_color_manual(values = c("black", "black"))+
+  #facet_grid(.~Clade)+
+  labs(x="", y ="Number of CNVs\nper Tumor")+
+    theme(    
+      legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text.y = element_text(size = 13),
+            axis.title.y = element_text(size = 14),
+            axis.text.x = element_text(size = 13),
+            #axis.text.x = element_blank(),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+pdf("total_ploidy_box1.pdf", height = 3,width = 7, useDingbats = FALSE)
+print(s)
+#wilcox.test(tetraploids$Total_CNVs_nom5, diploids$Total_CNVs_nom5)
+#wilcox.test(tetraploids$Total_gains_nom5, diploids$Total_gains_nom5)
+#wilcox.test(tetraploids$Total_loss_nom5, diploids$Total_loss_nom5)
+dev.off()
+
+gain_loss<-melt(haplos[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1"),c("Ploidy",  "Total_CNVs_linked","Total_CNVs_linked_gains","Total_CNVs_linked_losses")], id.vars = "Ploidy")
+gain_loss$variable<-as.character(gain_loss$variable)
+gain_loss$variable[grep("gain", gain_loss$variable)]<-"Gain"
+gain_loss$variable[grep("loss", gain_loss$variable)]<-"Loss"
+gain_loss$variable[grep("CNVs", gain_loss$variable)]<-"Total"
+gain_loss<-gain_loss[!is.na(gain_loss$value),]
+
+
+
+ggplot(gain_loss, aes(variable, value, fill = Ploidy))+
+  geom_boxplot(outlier.shape = NA)+geom_point(position=position_jitterdodge(jitter.width = .23, jitter.height = 0), size = 1.2,alpha = .3)+theme_bw()+
+    scale_fill_manual(values = c("white", "#B0B0B0"))+
+  labs(x="", y = "Number of Linked CNVs", main = "All CNVs")
+
+backm<-grepl("BM", cnv_table$New.CNV_ID_ext)
+dip_totals<-c(
+length(which(cnv_table$Tetraploid_exclusive=="" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])),
+length(which(cnv_table$Tetraploid_exclusive=="" & cnv_table$Type=="loss" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])),
+length(which(cnv_table$Tetraploid_exclusive=="" & cnv_table$Type=="gain" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])))
+
+tetra_totals<-c(
+length(which(cnv_table$Tetraploid_exclusive!="" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])),
+length(which(cnv_table$Tetraploid_exclusive!="" & cnv_table$Type=="loss" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])),
+length(which(cnv_table$Tetraploid_exclusive!="" & cnv_table$Type=="gain" & backm=="FALSE"))/length(which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])))
+
+category_totals<-c("Total", "Loss", "Gain")
+
+total_cnvs_total_tumors<-data.frame(Category=category_totals,
+           Diploid=dip_totals,
+           Tetraploid=tetra_totals)
+
+total_cnvs_total_tumors<-melt(total_cnvs_total_tumors, id.vars = "Category")
+
+# 
+# 
+# ggplot(total_cnvs_total_tumors, aes(Category, value, fill = variable))+
+#     geom_bar(stat = "identity", position = position_dodge2(preserve = "single", padding=0.01), color = "black")+
+#     scale_fill_manual(values = c("white", "#6D6D6D"))+
+#   labs(x="", y = "Total Number of CNVs / Total Number of Tumors", title = "Diploid v Tetraploid exclusive", fill = "")+
+#       scale_y_continuous(expand = c(0,0))+
+#         theme_bw()+
+#     theme(    
+#       #legend.position = "none",
+#             panel.grid.major = element_blank(),
+#             panel.grid.minor = element_blank(),
+#             panel.border = element_blank(),
+#             axis.line = element_line(),
+#             #axis.text.x = element_blank(),
+#             #axis.title = element_text(size = 20),
+#             panel.background = element_blank(),
+#             plot.margin=unit(c(1,1,-0.1,1), "cm"),
+#             strip.background =element_blank())
+
+
+
+final<-data.frame(Category=0,
+           Diploid=0,
+           Tetraploid=0)
+
+for(z in c(1:1000)){
+diploids.idx<-which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Ploidy == "Diploid")])
+dips.resample<-sample(diploids.idx, length(diploids.idx), replace = TRUE)
+
+diploids<-cnv_table[,c(1:68, dips.resample)]
+diploids<-diploids[which(rowSums(diploids[,69:ncol(diploids)])>0),]
+backm<-grepl("BM", diploids$New.CNV_ID_ext)
+dip_totals1<-c(
+length(which(diploids$Tetraploid_exclusive=="" & 
+               #diploids$Diploid_exclusive!="" & 
+               backm=="FALSE"))/length(which(colnames(diploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])),
+length(which(diploids$Tetraploid_exclusive=="" & diploids$Type=="loss" & 
+               #diploids$Diploid_exclusive!="" &
+               backm=="FALSE"))/length(which(colnames(diploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])),
+length(which(diploids$Tetraploid_exclusive=="" & 
+               #diploids$Diploid_exclusive!="" &
+               diploids$Type=="gain" & backm=="FALSE"))/length(which(colnames(diploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Diploid")])))
+
+
+tetraploids.idx<-which(colnames(cnv_table) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Ploidy == "Tetraploid")])
+tetras.resample<-sample(tetraploids.idx, length(tetraploids.idx), replace = TRUE)
+
+tetraploids<-cnv_table[,c(1:68, tetras.resample)]
+tetraploids<-tetraploids[which(rowSums(tetraploids[,69:ncol(tetraploids)])>0),]
+backm<-grepl("BM", tetraploids$New.CNV_ID_ext)
+tetra_totals1<-c(
+length(which(tetraploids$Tetraploid_exclusive!="" & backm=="FALSE"))/length(which(colnames(tetraploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])),
+length(which(tetraploids$Tetraploid_exclusive!="" & tetraploids$Type=="loss" & backm=="FALSE"))/length(which(colnames(tetraploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])),
+length(which(tetraploids$Tetraploid_exclusive!="" & tetraploids$Type=="gain" & backm=="FALSE"))/length(which(colnames(tetraploids) %in% haplos$Sample.TCG_ID[which(haplos$CNVs == "Yes" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Ploidy=="Tetraploid")])))
+
+category_totals<-c("Total", "Loss", "Gain")
+
+total_cnvs_total_tumors1<-data.frame(Category=category_totals,
+           Diploid=dip_totals1,
+           Tetraploid=tetra_totals1)
+
+final<-rbind(final, total_cnvs_total_tumors1)
+}
+
+final<-final[-1,]
+
+
+total_cnvs_total_tumors1<-melt(final, id.vars = "Category")
+ ggplot(total_cnvs_total_tumors1, aes(Category, value, fill = variable))+
+     geom_boxplot(position = position_dodge2(preserve = "single", padding=0.01), color = "black")+
+  labs(x="", y = "Total Number of CNVs / Total Number of Tumors", title = "Diploid  v Tetraploid exclusive", fill = "")+
+      scale_y_continuous(expand = c(0,0))+
+        theme_bw()+
+    theme(
+      #legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            #axis.text.x = element_blank(),
+            #axis.title = element_text(size = 20),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+
+
+# summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+#                       conf.interval=.95, .drop=TRUE) {
+#     library(plyr)
+# 
+#     # New version of length which can handle NA's: if na.rm==T, don't count them
+#     length2 <- function (x, na.rm=FALSE) {
+#         if (na.rm) sum(!is.na(x))
+#         else       length(x)
+#     }
+# 
+#     # This does the summary. For each group's data frame, return a vector with
+#     # N, mean, and sd
+#     datac <- ddply(data, groupvars, .drop=.drop,
+#       .fun = function(xx, col) {
+#         c(N    = length2(xx[[col]], na.rm=na.rm),
+#           mean = mean   (xx[[col]], na.rm=na.rm),
+#           sd   = sd     (xx[[col]], na.rm=na.rm)
+#         )
+#       },
+#       measurevar
+#     )
+# 
+#     # Rename the "mean" column    
+#     datac <- rename(datac, c("mean" = measurevar))
+# 
+#     datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+# 
+#     # Confidence interval multiplier for standard error
+#     # Calculate t-statistic for confidence interval: 
+#     # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+#     ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+#     datac$ci <- datac$se * ciMult
+# 
+#     return(datac)
+# }
+# tgc <- summarySE(total_cnvs_total_tumors1, measurevar="value", groupvars=c("Category","variable"))
+# tgc$lowci=tgc$value-1.96*tgc$se
+# tgc$highci=tgc$value+1.96*tgc$se
+# 
+# ggplot(tgc,  aes(x=Category, y=value, fill = variable)) +
+#     geom_bar(stat = "identity", position = position_dodge2(preserve = "single", padding=0.01), color = "black")+
+#   geom_errorbar( aes(x=Category, ymin=lowci, ymax=highci), position = position_dodge2(preserve = "single", padding=0.01),
+#                                                                                      colour="orange", alpha=0.9, size=1.5) +
+#   ggtitle("using confidence interval")
+
+# 
+# ggplot(total_cnvs_total_tumors1, aes(Category, value, fill = variable))+
+#     geom_bar(stat = "identity", position = position_dodge2(preserve = "single", padding=0.01), color = "black")+
+#     scale_fill_manual(values = c("white", "#6D6D6D"))+
+#   labs(x="", y = "Total Number of CNVs / Total Number of Tumors", title = "Diploid exclusive v Tetraploid exclusive", fill = "")+
+#       scale_y_continuous(expand = c(0,0))+
+#         theme_bw()+
+#     theme(    
+#       #legend.position = "none",
+#             panel.grid.major = element_blank(),
+#             panel.grid.minor = element_blank(),
+#             panel.border = element_blank(),
+#             axis.line = element_line(),
+#             #axis.text.x = element_blank(),
+#             #axis.title = element_text(size = 20),
+#             panel.background = element_blank(),
+#             plot.margin=unit(c(1,1,-0.1,1), "cm"),
+#             strip.background =element_blank())
+# 
+# 
+# 
+# ggplot(total_cnvs_total_tumors1, aes(Category, value, fill = variable))+
+#     geom_bar(stat = "identity", position = position_dodge2(preserve = "single", padding=0.01), color = "black")+
+#     scale_fill_manual(values = c("white", "#6D6D6D"))+
+#   labs(x="", y = "Total Number of CNVs / Total Number of Tumors", title = "Diploid exclusive v Tetraploid exclusive", fill = "")+
+#       scale_y_continuous(expand = c(0,0))+
+#         theme_bw()+
+#     theme(    
+#       #legend.position = "none",
+#             panel.grid.major = element_blank(),
+#             panel.grid.minor = element_blank(),
+#             panel.border = element_blank(),
+#             axis.line = element_line(),
+#             #axis.text.x = element_blank(),
+#             #axis.title = element_text(size = 20),
+#             panel.background = element_blank(),
+#             plot.margin=unit(c(1,1,-0.1,1), "cm"),
+#             strip.background =element_blank())
+
+
+
+#ggplot(haplos[which(haplos$CNVs=="Yes"),], aes(Ploidy, CNV_exc, fill = Ploidy))+
+#  geom_boxplot(outlier.shape = NA)+geom_point(position=position_jitterdodge(jitter.width = .3, jitter.height = 0), size = 1.8,alpha = .5)+theme_bw()+
+#    scale_fill_manual(values = c("white", "#B0B0B0"))+
+#        scale_y_continuous(expand = c(0,0), limits = c(-1,20))+
+#  labs(x="", y = "Number of CNVs per tumor", main = "Number of Ploidy-exclusive CNVs")
+
+
+```
+
+
+
+
+
+```{r, echo = FALSE}
+
+haplos<-haplos[which( haplos$Experimental.Transmission.=="No"),]
+tetraploids<-haplos[which(haplos$Ploidy=="Tetraploid" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Cell.Line.or.Tissue.Biopsy=="Tissue"),]
+diploids<-haplos[which(haplos$Ploidy=="Diploid" & haplos$Clone.Type..DFT1..DFT2..or.Non.DFTD.=="DFT1" & haplos$Cell.Line.or.Tissue.Biopsy=="Tissue"),]
+
+for(x in c(50,51,52,40,41,42,44,46,48,59)){
+print(colnames(haplos)[x])
+  print(wilcox.test(tetraploids[,x], diploids[,x]))
+  p<-wilcox.test(tetraploids[,x], diploids[,x])
+  print(paste0("corrected pval: ", p.adjust(p$p.value, "bonferroni", length(c(50,51,52,40,41,42,44,46,48, 59)))))
+}
+
+
+```
+
+
+
+Test whether there is a significant difference in Size of CNVs between Ploidies: Diploid v Tetraploid exclusive
+```{r, echo = FALSE}
+cnv_counts_width_diploid.nobm<-cnv_counts_width_diploid[!grepl("BM", cnv_counts_width_diploid$Ext),]
+cnv_counts_width_tetraploid.nobm<-cnv_counts_width_tetraploid[!grepl("BM", cnv_counts_width_tetraploid$Ext),]
+
+total_cnv_width.nobm<-rbind(cnv_counts_width_diploid.nobm, cnv_counts_width_tetraploid.nobm)
+
+ggplot(total_cnv_width.nobm, aes(CN, log10(Width), fill = Ploidy))+geom_boxplot(position = position_dodge(preserve = "single"), outlier.shape = NA)+
+geom_point(pch = 21, position = position_jitterdodge(jitter.height = 0))
+
+for(x in c(1, 1.5, 2.5, 3)){
+print(paste0("For CN State: ", x))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$CN)==x)],
+                   cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$CN)==x)])
+    print(p)
+}
+
+
+  print(paste0("For ALL CNV; Diploid v Tetraploid"))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width,
+                   cnv_counts_width_tetraploid.nobm$Width)
+    print(p)
+
+    print(paste0("For Gains; Diploid v Tetraploid"))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$State)=="gain")],
+                   cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$State)=="gain")])
+    print(p)
+
+
+    print(paste0("For Losses; Diploid v Tetraploid"))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$State)=="loss")],
+                   cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$State)=="loss")])
+    print(p)
+
+ggplot(total_cnv_width.nobm, aes(State, log10(Width), fill = Ploidy))+geom_boxplot(position = position_dodge(preserve = "single"), outlier.shape = NA)+
+geom_point(pch = 21, position = position_jitterdodge(jitter.height = 0, jitter.width = .2))
+
+
+ggplot(total_cnv_width.nobm, aes(Ploidy, log10(Width), fill = Ploidy))+geom_boxplot(position = position_dodge(preserve = "single"), outlier.shape = NA)+
+geom_point(pch = 21, position = position_jitterdodge(jitter.height = 0, jitter.width = .2))
+
+
+```
+
+
+Used wilcox.test
+
+```{r, echo = FALSE}
+
+print(paste0("Difference in CNV size for CN State within Diploid ", 1, " and ", 1.5))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$CN)==1.5)],
+                   cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$CN)==1)])
+    print(p)
+    
+print(paste0("Difference in CNV size for CN State within Tetraploid ", 1, " and ", 1.5))
+    p<-wilcox.test(cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$CN)==1.5)],
+                   cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$CN)==1)])
+    print(p)
+
+    
+print(paste0("Difference in CNV size for CN State within Diploid ", 2.5, " and ", 3))
+    p<-wilcox.test(cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$CN)==2.5)],
+                   cnv_counts_width_diploid.nobm$Width[which(as.character(cnv_counts_width_diploid.nobm$CN)==3)])
+    print(p)
+    
+print(paste0("Difference in CNV size for CN State within Tetraploid ", 2.5, " and ", 3))
+    p<-wilcox.test(cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$CN)==2.5)],
+                   cnv_counts_width_tetraploid.nobm$Width[which(as.character(cnv_counts_width_tetraploid.nobm$CN)==3)])
+    print(p)
+
+```
+
+
+
+```{r, echo = FALSE}
+
+#pdf("Diploid_Tetraploid_subclonal_size_012020.pdf", height = 3, width = 4.7)
+ggplot(total_cnv_width[which(total_cnv_width$CN %in% c("1", "1.5", "2.5", "3")),], aes(Ploidy, log10(Width), fill = CN))+geom_boxplot(outlier.shape = NA)+geom_point(aes(shape = Ploidy), alpha = .5, size = 2, position = position_jitterdodge())+
+    labs(x="CN States", y = "CNV Width log10(bp)", fill = "")+
+      scale_y_continuous(expand = c(0,0))+scale_fill_manual(values=c("#EFEEEE","#D2D3D3","#B5B6B6", "#939393"))+
+        theme_bw()+
+    theme(    
+      #legend.position = "none",
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.line = element_line(),
+            axis.text = element_text(size = 12),
+            axis.title.y = element_text(size = 15, margin = margin(r=10)),
+            axis.text.x = element_text( margin = margin(t=20), size = 12),
+            panel.background = element_blank(),
+            plot.margin=unit(c(1,1,-0.1,1), "cm"),
+            strip.background =element_blank())
+#+expand_limits(c(0,0))
+#dev.off()
+
+```
+
+
+
+
+
